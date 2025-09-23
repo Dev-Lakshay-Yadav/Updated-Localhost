@@ -4,6 +4,11 @@ import dotenv from "dotenv";
 import watchLocalRoutes from "./routes/watchLocal.js";
 import uploadRoutes from "./routes/uploadFile.js";
 
+import { getClient } from './config/box.js';
+import { processCases } from './utils/downloader/ts_portal_box_cases_downloader.js';
+
+
+
 dotenv.config();
 
 const app = express();
@@ -18,6 +23,17 @@ app.use(
   })
 );
 app.use(express.json());
+
+getClient((client) => {
+  processCases(client);
+});
+
+// Run every 1 minute
+setInterval(() => {
+  getClient((client) => {
+    processCases(client);
+  });
+}, 60 * 1000);
 
 // ✅ Then your routes
 app.use("/api", watchLocalRoutes,uploadRoutes);
