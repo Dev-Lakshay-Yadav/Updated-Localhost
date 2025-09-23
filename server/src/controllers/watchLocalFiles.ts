@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { getCaseFolders } from "../utils/watchLogic.js";
 
 // Fixed root directory
-const ROOT_DIR = "C:/Users/Tooth Sketch/Desktop/Local test";
+const ROOT_DIR = 'C:/Users/laksh/Desktop/test local';
 // const ROOT_DIR = "Z:/";
 
 // Controller

@@ -84,7 +84,7 @@ function getFolderStatus(casePath: string): "uploaded" | "portal upload" | "pend
   for (const d of subFolders) {
     if (!d.isDirectory()) continue;
     const upper = d.name.toUpperCase();
-    if (upper === "AAA -- O") return "portal upload";
+    if (upper === "AAA -- P") return "portal upload";
     if (upper === "AAA -- U") return "uploaded";
   }
   return "pending";

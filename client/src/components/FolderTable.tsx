@@ -100,7 +100,7 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
   }, [folders]);
 
   return (
-    <div className="overflow-x-auto p-4 bg-white shadow-md rounded-lg relative">
+    <div className="overflow-x-auto p-4 bg-white shadow-md rounded-lg">
       {/* Filter + Counts */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
         <div className="flex flex-wrap gap-4 text-gray-700">
@@ -181,13 +181,13 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setConfirmFolder(null)}
-                className="px-4 py-2 rounded bg-gray-300 hover:bg-gray-400 text-gray-700"
+                className="px-4 py-2 rounded bg-gray-300 hover:bg-gray-400 text-gray-700 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleUpload(confirmFolder.path)}
-                className="px-4 py-2 rounded bg-green-500 hover:bg-green-600 text-white font-semibold"
+                className="px-4 py-2 rounded bg-green-500 hover:bg-green-600 text-white font-semibold cursor-pointer"
               >
                 Confirm
               </button>
