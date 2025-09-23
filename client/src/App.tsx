@@ -4,6 +4,7 @@ import FolderTable from "./components/FolderTable";
 interface Folder {
   name: string;
   path: string;
+  status: "uploaded" | "portal upload" | "pending";
 }
 
 const App = () => {
@@ -15,7 +16,7 @@ const App = () => {
   useEffect(() => {
     const fetchFolders = async () => {
       try {
-        const res = await fetch("http://localhost:3000/api/cases");
+        const res = await fetch("http://localhost:5000/api/cases");
         const data: Folder[] = await res.json();
         setFolders(data);
 
@@ -23,6 +24,11 @@ const App = () => {
           new Set(data.map((f) => f.name.slice(0, 2)))
         );
         setTokens(uniqueTokens);
+
+        // ✅ Set the first token as default
+        if (uniqueTokens.length > 0) {
+          setSelectedToken(uniqueTokens[0]);
+        }
       } catch (err) {
         console.error("Error fetching folders:", err);
       } finally {
@@ -41,7 +47,7 @@ const App = () => {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4 text-center">Case Folders</h1>
+      <h1 className="text-2xl font-bold mb-4 text-center">Upload Cases</h1>
 
       {/* Token Buttons */}
       <div className="flex justify-center gap-2 mb-6 flex-wrap">
@@ -49,7 +55,7 @@ const App = () => {
           <button
             key={token}
             onClick={() => setSelectedToken(token)}
-            className={`px-4 py-2 border rounded ${
+            className={`px-4 py-2 border rounded cursor-pointer ${
               selectedToken === token
                 ? "bg-blue-600 text-white"
                 : "bg-gray-200 text-black"

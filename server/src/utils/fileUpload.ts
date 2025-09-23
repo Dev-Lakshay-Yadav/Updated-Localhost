@@ -1,111 +1,275 @@
-// import fs from "fs";
-// import path from "path";
-// import { initializeBoxClient } from "../config/box.js"; 
-// // import BoxFiles from "../models/BoxFiles.js";
+import path from "path";
+import { getBoxAccessToken } from "../config/box.js";
+import fs from "fs";
+import FormData from "form-data";
+import axios from "axios";
 
-// export const getOrCreateFolder = async (
-//   parentFolderId: string,
-//   folderName: string
-// ): Promise<string> => {
-//   const client = await initializeBoxClient();
-//   const items = await client.folders.getItems(parentFolderId, {
-//     limit: 1000,
-//     fields: "name,id,type",
-//   });
+export const getOrCreateFolder = async (
+  parentFolderId: string,
+  folderName: string,
+  accessToken: string
+): Promise<string> => {
+  const listRes = await fetch(
+    `https://api.box.com/2.0/folders/${parentFolderId}/items?limit=1000&fields=name,id,type`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
 
-//   const existingFolder = items.entries.find(
-//     (item: { type: string; name: string }) =>
-//       item.type === "folder" && item.name === folderName
-//   );
+  if (!listRes.ok) {
+    const errorText = await listRes.text();
+    throw new Error(
+      `Box API error [list items]: ${listRes.status} ${errorText}`
+    );
+  }
 
-//   if (existingFolder) return existingFolder.id;
+  const items = await listRes.json();
 
-//   const newFolder = await client.folders.create(parentFolderId, folderName);
-//   return newFolder.id;
-// };
+  if (!items.entries || !Array.isArray(items.entries)) {
+    console.error("Unexpected Box API response:", items);
+    throw new Error("Box API did not return folder entries");
+  }
 
-// export const generateUniqueFileName = async (
-//   folderId: string,
-//   originalName: string
-// ): Promise<string> => {
-//   const client = await initializeBoxClient();
-//   const { name: baseName, ext } = path.parse(originalName);
-//   const items = await client.folders.getItems(folderId, {
-//     limit: 1000,
-//     fields: "name",
-//   });
+  const existingFolder = items.entries.find(
+    (item: { type: string; name: string; id: string }) =>
+      item.type === "folder" && item.name === folderName
+  );
 
-//   const existingNames = items.entries.map((entry: any) => entry.name);
-//   if (!existingNames.includes(originalName)) return originalName;
+  if (existingFolder) return existingFolder.id;
 
-//   let counter = 1;
-//   let newName = `${baseName}(${counter})${ext}`;
-//   while (existingNames.includes(newName)) {
-//     counter++;
-//     newName = `${baseName}(${counter})${ext}`;
-//   }
+  // 2. Create folder if it doesn't exist
+  const createRes = await fetch("https://api.box.com/2.0/folders", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: folderName,
+      parent: { id: parentFolderId.toString() },
+    }),
+  });
 
-//   return newName;
-// };
+  if (!createRes.ok) {
+    const errorText = await createRes.text();
+    throw new Error(
+      `Box API error [create folder]: ${createRes.status} ${errorText}`
+    );
+  }
 
-// export const cleanupFiles = (files: Express.Multer.File[]) => {
-//   for (const file of files) {
-//     try {
-//       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-//     } catch (err) {
-//       console.error(`Error cleaning up ${file.path}:`, err);
-//     }
-//   }
-// };
+  const newFolder = await createRes.json();
+  return newFolder.id;
+};
 
-// export const uploadToBox = async (
-//   file: Express.Multer.File,
-//   folderId: string,
-//   file_type: string,
-//   case_id: string,
-//   folder_name: string
-// ) => {
-//   let fileStream: fs.ReadStream | null = null;
-//   try {
-//     const uniqueFileName = await generateUniqueFileName(folderId, file.originalname);
+export const generateUniqueFileName = async (
+  folderId: string,
+  originalName: string,
+  accessToken: string
+): Promise<string> => {
+  const { name: baseName, ext } = splitFileName(originalName);
 
-//     fileStream = fs.createReadStream(file.path);
+  const listRes = await fetch(
+    `https://api.box.com/2.0/folders/${folderId}/items?limit=1000&fields=name`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
 
-//     const client = await initializeBoxClient();
-//     const uploadedFile = await client.files.uploadFile(folderId, uniqueFileName, fileStream);
-//     const boxFileId = uploadedFile.entries[0].id;
+  if (!listRes.ok) {
+    const errorText = await listRes.text();
+    throw new Error(
+      `Box API error [list items for filenames]: ${listRes.status} ${errorText}`
+    );
+  }
 
-//     const sharedLink = await client.files.update(boxFileId, {
-//       shared_link: { access: "open" },
-//     });
+  const items = await listRes.json();
+  const existingNames = items.entries.map(
+    (entry: { name: string }) => entry.name
+  );
 
-//     // await BoxFiles.create({
-//     //   case_id,
-//     //   file_id: boxFileId,
-//     //   file_name: uniqueFileName,
-//     //   file_type: file_type || "CLIENT_UPLOAD",
-//     //   folder_name,
-//     // });
+  if (!existingNames.includes(originalName)) return originalName;
 
-//     return {
-//       success: true,
-//       boxFileId,
-//       fileUrl: sharedLink.shared_link?.url,
-//       fileName: uniqueFileName,
-//     };
-//   } catch (error) {
-//     console.error(`Error uploading file ${file.originalname}:`, error);
-//     return {
-//       success: false,
-//       fileName: file.originalname,
-//       error: error instanceof Error ? error.message : "Upload failed",
-//     };
-//   } finally {
-//     if (fileStream) fileStream.destroy();
-//     try {
-//       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-//     } catch (err) {
-//       console.error(`Error cleaning up ${file.path}:`, err);
-//     }
-//   }
-// };
+  let counter = 1;
+  let newName = `${baseName}(${counter})${ext}`;
+  while (existingNames.includes(newName)) {
+    counter++;
+    newName = `${baseName}(${counter})${ext}`;
+  }
+
+  return newName;
+};
+
+const splitFileName = (filename: string) => {
+  const lastDot = filename.lastIndexOf(".");
+  if (lastDot === -1) return { name: filename, ext: "" };
+  return {
+    name: filename.substring(0, lastDot),
+    ext: filename.substring(lastDot),
+  };
+};
+
+const sanitizeFileName = (name: string) => {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
+};
+const uploadLocalFileToBox = async (
+  filePath: string,
+  folderId: string,
+  accessToken: string
+) => {
+  try {
+    const fileName = sanitizeFileName(path.basename(filePath));
+    const fileStream = fs.createReadStream(filePath);
+
+    const formData = new FormData();
+    formData.append(
+      "attributes",
+      JSON.stringify({
+        name: fileName,
+        parent: { id: folderId },
+      })
+    );
+    formData.append("file", fileStream);
+
+    const res = await axios.post(
+      "https://upload.box.com/api/2.0/files/content",
+      formData,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          ...formData.getHeaders(),
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
+
+    const data = res.data;
+    const boxFileId = data.entries?.[0]?.id;
+
+    return { success: true, boxFileId, fileName };
+  } catch (error: any) {
+    console.error(
+      `Error uploading file ${filePath}:`,
+      error.response?.data || error.message
+    );
+    return {
+      success: false,
+      fileName: path.basename(filePath),
+      error: error.message,
+    };
+  }
+};
+
+const imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"];
+
+// Helper: decide if file is image or download
+const getFileTypeFolder = (filePath: string) => {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const isImage = imageExtensions.includes(ext);
+  return isImage ? "PREVIEW_FILES" : "DOWNLOADS";
+};
+
+export const handleBoxUpload = async (
+  caseId: string,
+  userToken: string,
+  patientFolderName: string | null,
+  tokenFolderId: string | null,
+  caseFolderId: string | null,
+  files: string[]
+) => {
+  const userId = 1;
+if (
+  !caseId ||
+  !userToken ||
+  !patientFolderName ||
+  !tokenFolderId ||
+  !caseFolderId ||
+  !files?.length
+) {
+  console.error("Missing parameters:", {
+    caseId: !!caseId,
+    userToken: !!userToken,
+    patientFolderName: !!patientFolderName,
+    tokenFolderId: !!tokenFolderId,
+    caseFolderId: !!caseFolderId,
+    files: !!files?.length,
+  });
+  throw new Error("Missing required parameters");
+}
+
+
+  const accessToken = await getBoxAccessToken();
+
+  // 1️⃣ Create TS_Uploads folder under caseFolderId
+  const tsUploadFolderId = await getOrCreateFolder(
+    caseFolderId,
+    "TS_Uploads",
+    accessToken
+  );
+
+  // 2️⃣ Create patient folder under TS_Uploads
+  const patientFolderId = await getOrCreateFolder(
+    tsUploadFolderId,
+    patientFolderName,
+    accessToken
+  );
+
+  const folderNameMap: Record<string, string> = {
+    DOWNLOADS: "Downloads",
+    PREVIEW_FILES: "Previews",
+  };
+
+  // 3️⃣ Group files by type
+  const filesByType: Record<string, string[]> = {};
+  for (const filePath of files) {
+    const fileType = getFileTypeFolder(filePath);
+    if (!filesByType[fileType]) filesByType[fileType] = [];
+    filesByType[fileType].push(filePath);
+  }
+
+  // 4️⃣ Create folders for each type
+  const folderIdsByType: Record<string, string> = {};
+  for (const fileType of Object.keys(filesByType)) {
+    const targetFolderName = folderNameMap[fileType] || fileType;
+    folderIdsByType[fileType] = await getOrCreateFolder(
+      patientFolderId,
+      targetFolderName,
+      accessToken
+    );
+  }
+
+  // 5️⃣ Controlled parallel uploads
+  const CONCURRENCY_LIMIT = 5;
+  const allFiles = Object.entries(filesByType).flatMap(([fileType, filePaths]) =>
+    filePaths.map((filePath) => ({ filePath, fileType }))
+  );
+
+  const uploadedFiles: any[] = [];
+
+  const uploadInBatches = async () => {
+    for (let i = 0; i < allFiles.length; i += CONCURRENCY_LIMIT) {
+      const batch = allFiles.slice(i, i + CONCURRENCY_LIMIT);
+      const results = await Promise.all(
+        batch.map(({ filePath, fileType }) =>
+          uploadLocalFileToBox(filePath, folderIdsByType[fileType], accessToken).then(
+            (result) => ({ ...result, file_type: fileType })
+          )
+        )
+      );
+      uploadedFiles.push(...results);
+    }
+  };
+
+  await uploadInBatches();
+
+  const uploadSummary = {
+    userToken,
+    caseId,
+    patientFolderName,
+    uploadedFiles,
+    userId,
+  };
+
+  return uploadSummary;
+};
+

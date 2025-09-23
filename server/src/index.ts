@@ -7,7 +7,7 @@ import uploadRoutes from "./routes/uploadFile.js";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = 5000;
 
 // ✅ CORS & JSON first
 app.use(
