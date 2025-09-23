@@ -111,64 +111,259 @@ const splitFileName = (filename: string) => {
 const sanitizeFileName = (name: string) => {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
 };
-const uploadLocalFileToBox = async (
-  filePath: string,
-  folderId: string,
-  accessToken: string
-) => {
-  try {
-    const fileName = sanitizeFileName(path.basename(filePath));
-    const fileStream = fs.createReadStream(filePath);
 
-    const formData = new FormData();
-    formData.append(
-      "attributes",
-      JSON.stringify({
-        name: fileName,
-        parent: { id: folderId },
-      })
-    );
-    formData.append("file", fileStream);
+// const sanitizeFileName = (name: string) => name.replace(/[\/\\?%*:|"<>]/g, "_");
 
-    const res = await axios.post(
-      "https://upload.box.com/api/2.0/files/content",
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          ...formData.getHeaders(),
-        },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-      }
-    );
+// const uploadLocalFileToBox = async (
+//   filePath: string,
+//   folderId: string,
+//   accessToken: string
+// ) => {
+//   try {
+//     const fileName = sanitizeFileName(path.basename(filePath));
+//     const fileStream = fs.createReadStream(filePath);
 
-    const data = res.data;
-    const boxFileId = data.entries?.[0]?.id;
+//     const formData = new FormData();
+//     formData.append(
+//       "attributes",
+//       JSON.stringify({
+//         name: fileName,
+//         parent: { id: folderId },
+//       })
+//     );
+//     formData.append("file", fileStream);
 
-    return { success: true, boxFileId, fileName };
-  } catch (error: any) {
-    console.error(
-      `Error uploading file ${filePath}:`,
-      error.response?.data || error.message
-    );
-    return {
-      success: false,
-      fileName: path.basename(filePath),
-      error: error.message,
-    };
-  }
-};
+//     const res = await axios.post(
+//       "https://upload.box.com/api/2.0/files/content",
+//       formData,
+//       {
+//         headers: {
+//           Authorization: `Bearer ${accessToken}`,
+//           ...formData.getHeaders(),
+//         },
+//         maxContentLength: Infinity,
+//         maxBodyLength: Infinity,
+//       }
+//     );
+
+//     const data = res.data;
+//     const boxFileId = data.entries?.[0]?.id;
+
+//     return { success: true, boxFileId, fileName };
+//   } catch (error: any) {
+//     console.error(
+//       `Error uploading file ${filePath}:`,
+//       error.response?.data || error.message
+//     );
+//     return {
+//       success: false,
+//       fileName: path.basename(filePath),
+//       error: error.message,
+//     };
+//   }
+// };
+
+// const imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"];
+
+// // Helper: decide if file is image or download
+// const getFileTypeFolder = (filePath: string) => {
+//   const ext = path.extname(filePath).slice(1).toLowerCase();
+//   const isImage = imageExtensions.includes(ext);
+//   return isImage ? "PREVIEW_FILES" : "DOWNLOADS";
+// };
+
+// export const handleBoxUpload = async (
+//   caseId: string,
+//   userToken: string,
+//   patientFolderName: string | null,
+//   tokenFolderId: string | null,
+//   caseFolderId: string | null,
+//   files: string[]
+// ) => {
+//   const userId = 1;
+// if (
+//   !caseId ||
+//   !userToken ||
+//   !patientFolderName ||
+//   !tokenFolderId ||
+//   !caseFolderId ||
+//   !files?.length
+// ) {
+//   console.error("Missing parameters:", {
+//     caseId: !!caseId,
+//     userToken: !!userToken,
+//     patientFolderName: !!patientFolderName,
+//     tokenFolderId: !!tokenFolderId,
+//     caseFolderId: !!caseFolderId,
+//     files: !!files?.length,
+//   });
+//   throw new Error("Missing required parameters");
+// }
+
+//   const accessToken = await getBoxAccessToken();
+
+//   // 1️⃣ Create TS_Uploads folder under caseFolderId
+//   const tsUploadFolderId = await getOrCreateFolder(
+//     caseFolderId,
+//     "TS_Uploads",
+//     accessToken
+//   );
+
+//   // 2️⃣ Create patient folder under TS_Uploads
+//   const patientFolderId = await getOrCreateFolder(
+//     tsUploadFolderId,
+//     patientFolderName,
+//     accessToken
+//   );
+
+//   const folderNameMap: Record<string, string> = {
+//     DOWNLOADS: "Downloads",
+//     PREVIEW_FILES: "Previews",
+//   };
+
+//   // 3️⃣ Group files by type
+//   const filesByType: Record<string, string[]> = {};
+//   for (const filePath of files) {
+//     const fileType = getFileTypeFolder(filePath);
+//     if (!filesByType[fileType]) filesByType[fileType] = [];
+//     filesByType[fileType].push(filePath);
+//   }
+
+//   // 4️⃣ Create folders for each type
+//   const folderIdsByType: Record<string, string> = {};
+//   for (const fileType of Object.keys(filesByType)) {
+//     const targetFolderName = folderNameMap[fileType] || fileType;
+//     folderIdsByType[fileType] = await getOrCreateFolder(
+//       patientFolderId,
+//       targetFolderName,
+//       accessToken
+//     );
+//   }
+
+//   // 5️⃣ Controlled parallel uploads
+//   const CONCURRENCY_LIMIT = 5;
+//   const allFiles = Object.entries(filesByType).flatMap(([fileType, filePaths]) =>
+//     filePaths.map((filePath) => ({ filePath, fileType }))
+//   );
+
+//   const uploadedFiles: any[] = [];
+
+//   const uploadInBatches = async () => {
+//     for (let i = 0; i < allFiles.length; i += CONCURRENCY_LIMIT) {
+//       const batch = allFiles.slice(i, i + CONCURRENCY_LIMIT);
+//       const results = await Promise.all(
+//         batch.map(({ filePath, fileType }) =>
+//           uploadLocalFileToBox(filePath, folderIdsByType[fileType], accessToken).then(
+//             (result) => ({ ...result, file_type: fileType })
+//           )
+//         )
+//       );
+//       uploadedFiles.push(...results);
+//     }
+//   };
+
+//   await uploadInBatches();
+
+//   const uploadSummary = {
+//     userToken,
+//     caseId,
+//     patientFolderName,
+//     uploadedFiles,
+//     userId,
+//   };
+
+//   return uploadSummary;
+// };
+
+import pLimit from "p-limit";
 
 const imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"];
 
-// Helper: decide if file is image or download
 const getFileTypeFolder = (filePath: string) => {
   const ext = path.extname(filePath).slice(1).toLowerCase();
-  const isImage = imageExtensions.includes(ext);
-  return isImage ? "PREVIEW_FILES" : "DOWNLOADS";
+  return imageExtensions.includes(ext) ? "PREVIEW_FILES" : "DOWNLOADS";
+};
+const uploadLocalFileToBox = async (
+  filePath: string,
+  folderId: string,
+  accessToken: string,
+  onProgress?: (percent: number) => void
+) => {
+  const fileName = sanitizeFileName(path.basename(filePath));
+  const fileSize = fs.statSync(filePath).size;
+  const fileStream = fs.createReadStream(filePath);
+
+  let uploadedBytes = 0;
+  fileStream.on("data", (chunk) => {
+    uploadedBytes += chunk.length;
+    if (onProgress) onProgress((uploadedBytes / fileSize) * 100);
+  });
+
+  const formData = new FormData();
+  formData.append(
+    "attributes",
+    JSON.stringify({ name: fileName, parent: { id: folderId } })
+  );
+  formData.append("file", fileStream);
+
+  const res = await axios.post(
+    "https://upload.box.com/api/2.0/files/content",
+    formData,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...formData.getHeaders(),
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    }
+  );
+
+  const boxFileId = res.data.entries?.[0]?.id;
+  return { success: true, boxFileId, fileName };
 };
 
+// Retry wrapper for rate-limited uploads
+const uploadWithRetry = async (
+  filePath: string,
+  folderId: string,
+  accessToken: string,
+  retries = 3
+) => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await uploadLocalFileToBox(
+        filePath,
+        folderId,
+        accessToken,
+        // (percent) => {
+        //   console.log(
+        //     `Uploading ${path.basename(filePath)}: ${percent.toFixed(2)}%`
+        //   );
+        // }
+      );
+    } catch (err: any) {
+      if (err.response?.status === 429 && attempt < retries) {
+        const waitTime = Math.pow(2, attempt) * 1000; // exponential backoff
+        // console.log(
+        //   `Rate limited for ${path.basename(
+        //     filePath
+        //   )}. Retrying in ${waitTime}ms...`
+        // );
+        await new Promise((res) => setTimeout(res, waitTime));
+      } else {
+        console.error(`Failed to upload ${filePath}:`, err.message);
+        return {
+          success: false,
+          fileName: path.basename(filePath),
+          error: err.message,
+        };
+      }
+    }
+  }
+};
+
+// Main upload handler
 export const handleBoxUpload = async (
   caseId: string,
   userToken: string,
@@ -177,49 +372,37 @@ export const handleBoxUpload = async (
   caseFolderId: string | null,
   files: string[]
 ) => {
-  const userId = 1;
-if (
-  !caseId ||
-  !userToken ||
-  !patientFolderName ||
-  !tokenFolderId ||
-  !caseFolderId ||
-  !files?.length
-) {
-  console.error("Missing parameters:", {
-    caseId: !!caseId,
-    userToken: !!userToken,
-    patientFolderName: !!patientFolderName,
-    tokenFolderId: !!tokenFolderId,
-    caseFolderId: !!caseFolderId,
-    files: !!files?.length,
-  });
-  throw new Error("Missing required parameters");
-}
-
+  if (
+    !caseId ||
+    !userToken ||
+    !patientFolderName ||
+    !caseFolderId ||
+    !files?.length
+  ) {
+    throw new Error("Missing required parameters");
+  }
 
   const accessToken = await getBoxAccessToken();
 
-  // 1️⃣ Create TS_Uploads folder under caseFolderId
+  // Create TS_Uploads folder under caseFolderId
   const tsUploadFolderId = await getOrCreateFolder(
     caseFolderId,
     "TS_Uploads",
     accessToken
   );
 
-  // 2️⃣ Create patient folder under TS_Uploads
+  // Create patient folder under TS_Uploads
   const patientFolderId = await getOrCreateFolder(
     tsUploadFolderId,
     patientFolderName,
     accessToken
   );
 
+  // Group files by type
   const folderNameMap: Record<string, string> = {
     DOWNLOADS: "Downloads",
     PREVIEW_FILES: "Previews",
   };
-
-  // 3️⃣ Group files by type
   const filesByType: Record<string, string[]> = {};
   for (const filePath of files) {
     const fileType = getFileTypeFolder(filePath);
@@ -227,7 +410,7 @@ if (
     filesByType[fileType].push(filePath);
   }
 
-  // 4️⃣ Create folders for each type
+  // Create folders for each type
   const folderIdsByType: Record<string, string> = {};
   for (const fileType of Object.keys(filesByType)) {
     const targetFolderName = folderNameMap[fileType] || fileType;
@@ -238,38 +421,34 @@ if (
     );
   }
 
-  // 5️⃣ Controlled parallel uploads
-  const CONCURRENCY_LIMIT = 5;
-  const allFiles = Object.entries(filesByType).flatMap(([fileType, filePaths]) =>
-    filePaths.map((filePath) => ({ filePath, fileType }))
+  // Flatten all files with type
+  const allFiles = Object.entries(filesByType).flatMap(
+    ([fileType, filePaths]) =>
+      filePaths.map((filePath) => ({ filePath, fileType }))
   );
 
-  const uploadedFiles: any[] = [];
+  // Use p-limit for controlled concurrency
+  const CONCURRENCY_LIMIT = 5;
+  const limit = pLimit(CONCURRENCY_LIMIT);
 
-  const uploadInBatches = async () => {
-    for (let i = 0; i < allFiles.length; i += CONCURRENCY_LIMIT) {
-      const batch = allFiles.slice(i, i + CONCURRENCY_LIMIT);
-      const results = await Promise.all(
-        batch.map(({ filePath, fileType }) =>
-          uploadLocalFileToBox(filePath, folderIdsByType[fileType], accessToken).then(
-            (result) => ({ ...result, file_type: fileType })
-          )
+  const uploadedFiles = await Promise.all(
+    allFiles.map(({ filePath, fileType }) =>
+      limit(() =>
+        uploadWithRetry(filePath, folderIdsByType[fileType], accessToken).then(
+          (result) => ({
+            ...result,
+            file_type: fileType,
+          })
         )
-      );
-      uploadedFiles.push(...results);
-    }
-  };
+      )
+    )
+  );
 
-  await uploadInBatches();
-
-  const uploadSummary = {
+  return {
     userToken,
     caseId,
     patientFolderName,
     uploadedFiles,
-    userId,
+    userId: 1,
   };
-
-  return uploadSummary;
 };
-
