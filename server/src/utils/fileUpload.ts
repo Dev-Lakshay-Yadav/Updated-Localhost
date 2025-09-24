@@ -379,6 +379,11 @@ export const handleBoxUpload = async (
     !caseFolderId ||
     !files?.length
   ) {
+    console.log("case Id : ",caseId)
+    console.log("user Token : ",userToken)
+    console.log("Patient Name : ",patientFolderName)
+    console.log("caseFolderId : ",caseFolderId)
+    console.log("files : ",files)
     throw new Error("Missing required parameters");
   }
 
