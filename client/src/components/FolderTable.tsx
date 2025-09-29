@@ -30,14 +30,55 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
     }));
   };
 
+  const isAnyUploading = useMemo(
+    () => Object.values(uploading).some(Boolean),
+    [uploading]
+  );
+
+  const filteredFolders = useMemo(() => {
+    if (filterStatus === "all") return folders;
+    return folders.filter((f) => f.status === filterStatus);
+  }, [folders, filterStatus]);
+
+  // "Select All" functionality
+  const allFilteredSelected = useMemo(() => {
+    return (
+      filteredFolders.length > 0 &&
+      filteredFolders.every(
+        (f) =>
+          selectedFolders[f.path] ||
+          uploadedFolders[f.path] ||
+          f.status === "uploaded" ||
+          f.status === "portal upload"
+      )
+    );
+  }, [filteredFolders, selectedFolders, uploadedFolders]);
+
+  const toggleSelectAll = () => {
+    const newSelected: Record<string, boolean> = { ...selectedFolders };
+    const shouldSelectAll = !allFilteredSelected;
+
+    filteredFolders.forEach((f) => {
+      const isAlreadyUploaded =
+        uploadedFolders[f.path] ||
+        f.status === "uploaded" ||
+        f.status === "portal upload";
+      if (!isAlreadyUploaded) {
+        newSelected[f.path] = shouldSelectAll;
+      }
+    });
+
+    setSelectedFolders(newSelected);
+  };
+
   const handleUploadSelected = async () => {
-    // Get selected folder paths that are not yet uploaded
     const pathsToUpload = Object.keys(selectedFolders).filter(
       (path) => selectedFolders[path] && !uploadedFolders[path]
     );
 
+    if (pathsToUpload.length === 0) return;
+
     for (const path of pathsToUpload) {
-      // Mark as uploading
       setUploading((prev) => ({ ...prev, [path]: true }));
       setUploadError((prev) => ({ ...prev, [path]: false }));
 
@@ -51,24 +92,16 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
         if (!res.ok) throw new Error(`Upload failed for ${path}`);
         await res.json();
 
-        // Mark as uploaded
         setUploadedFolders((prev) => ({ ...prev, [path]: true }));
-        // Deselect folder after upload
         setSelectedFolders((prev) => ({ ...prev, [path]: false }));
       } catch (err) {
         console.error("❌ Error uploading:", err);
         setUploadError((prev) => ({ ...prev, [path]: true }));
       } finally {
-        // Done uploading
         setUploading((prev) => ({ ...prev, [path]: false }));
       }
     }
   };
-
-  const filteredFolders = useMemo(() => {
-    if (filterStatus === "all") return folders;
-    return folders.filter((f) => f.status === filterStatus);
-  }, [folders, filterStatus]);
 
   const counts = useMemo(() => {
     const total = folders.length;
@@ -80,7 +113,7 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
 
   return (
     <div className="overflow-x-auto p-4 bg-white shadow-md rounded-lg relative">
-      {/* Filter + Counts */}
+      {/* Top Controls */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
         <div className="flex flex-wrap gap-4 text-gray-700">
           <span>
@@ -96,7 +129,8 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
             Portal Upload: <strong>{counts.portal}</strong>
           </span>
         </div>
-        <div>
+
+        <div className="flex gap-2 items-center">
           <select
             value={filterStatus}
             onChange={(e) =>
@@ -109,22 +143,44 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
             <option value="uploaded">Uploaded</option>
             <option value="portal upload">Portal Upload</option>
           </select>
+
+          <button
+            onClick={handleUploadSelected}
+            disabled={
+              isAnyUploading ||
+              Object.keys(selectedFolders).filter(
+                (key) => selectedFolders[key] && !uploadedFolders[key]
+              ).length === 0
+            }
+            className="px-4 py-2 rounded bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isAnyUploading ? "Uploading…" : "Upload Selected"}
+          </button>
         </div>
       </div>
 
+      {/* Folder Table */}
       <table className="min-w-full border-separate border-spacing-y-2">
         <thead>
           <tr className="bg-gray-50 text-left">
-            <th className="px-4 py-2">#</th>
-            <th className="px-4 py-2">Select</th>
+            <th className="px-4 py-2">SNo.</th>
             <th className="px-4 py-2">Folder Name</th>
             <th className="px-4 py-2">Path</th>
+            <th className="px-4 py-2">Status</th>
+            <th className="px-4 py-2 text-center">
+              <input
+                type="checkbox"
+                checked={allFilteredSelected}
+                onChange={toggleSelectAll}
+                disabled={filteredFolders.length === 0}
+              />
+            </th>
           </tr>
         </thead>
         <tbody>
           {filteredFolders.length === 0 ? (
             <tr>
-              <td colSpan={4} className="px-4 py-6 text-center text-gray-400">
+              <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
                 No folders found
               </td>
             </tr>
@@ -138,13 +194,14 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
               // Dynamic row background
               let rowClass = "bg-white";
               if (uploading[folder.path])
-                rowClass = "bg-yellow-100 animate-pulse";
-              else if (uploadError[folder.path]) rowClass = "bg-red-100";
+                rowClass = "bg-yellow-200 animate-pulse";
+              else if (uploadError[folder.path]) rowClass = "bg-red-200";
               else if (
                 uploadedFolders[folder.path] ||
-                folder.status === "uploaded"
+                folder.status === "uploaded" ||
+                folder.status === "portal upload"
               )
-                rowClass = "bg-green-100";
+                rowClass = "bg-green-200";
 
               return (
                 <tr
@@ -152,6 +209,20 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
                   className={`${rowClass} rounded-lg shadow-sm hover:shadow-md transition-shadow`}
                 >
                   <td className="px-4 py-3">{index + 1}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {folder.name}
+                    {uploadError[folder.path] && (
+                      <div className="text-red-600 text-sm mt-1">
+                        Failed to upload. Some wrong
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-sm truncate">
+                    {folder.path}
+                  </td>
+                  <td className="px-4 py-3 font-semibold capitalize">
+                    {folder.status}
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <input
                       type="checkbox"
@@ -160,31 +231,12 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
                       onChange={() => toggleFolderSelection(folder.path)}
                     />
                   </td>
-                  <td className="px-4 py-3 font-medium">{folder.name}</td>
-                  <td className="px-4 py-3 text-gray-500 text-sm truncate">
-                    {folder.path}
-                  </td>
                 </tr>
               );
             })
           )}
         </tbody>
       </table>
-
-      {/* Upload Selected Button */}
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={handleUploadSelected}
-          disabled={
-            Object.keys(selectedFolders).filter(
-              (key) => selectedFolders[key] && !uploadedFolders[key]
-            ).length === 0
-          }
-          className="px-4 py-2 rounded bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Upload Selected
-        </button>
-      </div>
     </div>
   );
 };

@@ -3,6 +3,13 @@ import { getBoxAccessToken } from "../config/box.js";
 import fs from "fs";
 import FormData from "form-data";
 import axios from "axios";
+import pLimit from "p-limit";
+
+const imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"];
+
+const sanitizeFileName = (name: string) => {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
+};
 
 export const getOrCreateFolder = async (
   parentFolderId: string,
@@ -108,8 +115,203 @@ const splitFileName = (filename: string) => {
   };
 };
 
-const sanitizeFileName = (name: string) => {
-  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
+export const deleteBoxFolder = async (
+  folderId: string,
+  accessToken: string
+) => {
+  try {
+    await axios.delete(`https://api.box.com/2.0/folders/${folderId}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      params: {
+        recursive: true, // delete all subfolders and files
+      },
+    });
+  } catch (err: any) {
+    console.error(
+      `Failed to delete folder ${folderId}:`,
+      err.response?.data || err.message
+    );
+    throw err;
+  }
+};
+
+const getFileTypeFolder = (filePath: string) => {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  return imageExtensions.includes(ext) ? "PREVIEW_FILES" : "DOWNLOADS";
+};
+
+const uploadLocalFileToBox = async (
+  filePath: string,
+  folderId: string,
+  accessToken: string,
+  onProgress?: (percent: number) => void
+) => {
+  const fileName = sanitizeFileName(path.basename(filePath));
+  const fileSize = fs.statSync(filePath).size;
+  const fileStream = fs.createReadStream(filePath);
+
+  let uploadedBytes = 0;
+  fileStream.on("data", (chunk) => {
+    uploadedBytes += chunk.length;
+    if (onProgress) onProgress((uploadedBytes / fileSize) * 100);
+  });
+
+  const formData = new FormData();
+  formData.append(
+    "attributes",
+    JSON.stringify({ name: fileName, parent: { id: folderId } })
+  );
+  formData.append("file", fileStream);
+
+  const res = await axios.post(
+    "https://upload.box.com/api/2.0/files/content",
+    formData,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...formData.getHeaders(),
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    }
+  );
+
+  const boxFileId = res.data.entries?.[0]?.id;
+  return { success: true, boxFileId, fileName };
+};
+
+// Retry wrapper for rate-limited uploads
+const uploadWithRetry = async (
+  filePath: string,
+  folderId: string,
+  accessToken: string,
+  retries = 3
+) => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await uploadLocalFileToBox(filePath, folderId, accessToken);
+    } catch (err: any) {
+      if (err.response?.status === 429 && attempt < retries) {
+        const waitTime = Math.pow(2, attempt) * 1000; // exponential backoff
+        await new Promise((res) => setTimeout(res, waitTime));
+      } else {
+        throw new Error(`Failed to upload ${filePath}: ${err.message}`);
+      }
+    }
+  }
+};
+
+// Main upload handler
+export const handleBoxUpload = async (
+  caseId: string,
+  userToken: string,
+  patientFolderName: string | null,
+  tokenFolderId: string | null,
+  caseFolderId: string | null,
+  files: string[]
+) => {
+  if (
+    !caseId ||
+    !userToken ||
+    !patientFolderName ||
+    !caseFolderId ||
+    !files?.length
+  ) {
+    throw new Error("Missing required parameters");
+  }
+
+  const accessToken = await getBoxAccessToken();
+
+  // Track created folders for rollback
+  const createdFolderIds: string[] = [];
+
+  try {
+    // Create TS_Uploads folder under caseFolderId
+    const tsUploadFolderId = await getOrCreateFolder(
+      caseFolderId,
+      "TS_Uploads",
+      accessToken
+    );
+    createdFolderIds.push(tsUploadFolderId);
+
+    // Create patient folder under TS_Uploads
+    const patientFolderId = await getOrCreateFolder(
+      tsUploadFolderId,
+      patientFolderName,
+      accessToken
+    );
+    createdFolderIds.push(patientFolderId);
+
+    // Group files by type
+    const folderNameMap: Record<string, string> = {
+      DOWNLOADS: "Downloads",
+      PREVIEW_FILES: "Previews",
+    };
+    const filesByType: Record<string, string[]> = {};
+    for (const filePath of files) {
+      const fileType = getFileTypeFolder(filePath);
+      if (!filesByType[fileType]) filesByType[fileType] = [];
+      filesByType[fileType].push(filePath);
+    }
+
+    // Create folders for each type
+    const folderIdsByType: Record<string, string> = {};
+    for (const fileType of Object.keys(filesByType)) {
+      const targetFolderName = folderNameMap[fileType] || fileType;
+      const folderId = await getOrCreateFolder(
+        patientFolderId,
+        targetFolderName,
+        accessToken
+      );
+      folderIdsByType[fileType] = folderId;
+      createdFolderIds.push(folderId);
+    }
+
+    // Flatten all files with type
+    const allFiles = Object.entries(filesByType).flatMap(
+      ([fileType, filePaths]) =>
+        filePaths.map((filePath) => ({ filePath, fileType }))
+    );
+
+    // Upload files with concurrency control
+    const CONCURRENCY_LIMIT = 5;
+    const limit = pLimit(CONCURRENCY_LIMIT);
+
+    const uploadedFiles = await Promise.all(
+      allFiles.map(({ filePath, fileType }) =>
+        limit(() =>
+          uploadWithRetry(
+            filePath,
+            folderIdsByType[fileType],
+            accessToken
+          ).then((result) => ({
+            ...result,
+            file_type: fileType,
+          }))
+        )
+      )
+    );
+
+    return {
+      userToken,
+      caseId,
+      patientFolderName,
+      uploadedFiles,
+      userId: 1,
+    };
+  } catch (err: any) {
+    // Rollback: delete all created folders
+    for (const folderId of createdFolderIds.reverse()) {
+      try {
+        await deleteBoxFolder(folderId, accessToken);
+      } catch (deleteErr) {
+        console.error("Failed to delete folder during rollback:", deleteErr);
+      }
+    }
+    throw err; // bubble up error to controller
+  }
 };
 
 // const sanitizeFileName = (name: string) => name.replace(/[\/\\?%*:|"<>]/g, "_");
@@ -274,186 +476,3 @@ const sanitizeFileName = (name: string) => {
 
 //   return uploadSummary;
 // };
-
-import pLimit from "p-limit";
-
-const imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"];
-
-const getFileTypeFolder = (filePath: string) => {
-  const ext = path.extname(filePath).slice(1).toLowerCase();
-  return imageExtensions.includes(ext) ? "PREVIEW_FILES" : "DOWNLOADS";
-};
-const uploadLocalFileToBox = async (
-  filePath: string,
-  folderId: string,
-  accessToken: string,
-  onProgress?: (percent: number) => void
-) => {
-  const fileName = sanitizeFileName(path.basename(filePath));
-  const fileSize = fs.statSync(filePath).size;
-  const fileStream = fs.createReadStream(filePath);
-
-  let uploadedBytes = 0;
-  fileStream.on("data", (chunk) => {
-    uploadedBytes += chunk.length;
-    if (onProgress) onProgress((uploadedBytes / fileSize) * 100);
-  });
-
-  const formData = new FormData();
-  formData.append(
-    "attributes",
-    JSON.stringify({ name: fileName, parent: { id: folderId } })
-  );
-  formData.append("file", fileStream);
-
-  const res = await axios.post(
-    "https://upload.box.com/api/2.0/files/content",
-    formData,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...formData.getHeaders(),
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    }
-  );
-
-  const boxFileId = res.data.entries?.[0]?.id;
-  return { success: true, boxFileId, fileName };
-};
-
-// Retry wrapper for rate-limited uploads
-const uploadWithRetry = async (
-  filePath: string,
-  folderId: string,
-  accessToken: string,
-  retries = 3
-) => {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await uploadLocalFileToBox(
-        filePath,
-        folderId,
-        accessToken,
-        // (percent) => {
-        //   console.log(
-        //     `Uploading ${path.basename(filePath)}: ${percent.toFixed(2)}%`
-        //   );
-        // }
-      );
-    } catch (err: any) {
-      if (err.response?.status === 429 && attempt < retries) {
-        const waitTime = Math.pow(2, attempt) * 1000; // exponential backoff
-        // console.log(
-        //   `Rate limited for ${path.basename(
-        //     filePath
-        //   )}. Retrying in ${waitTime}ms...`
-        // );
-        await new Promise((res) => setTimeout(res, waitTime));
-      } else {
-        console.error(`Failed to upload ${filePath}:`, err.message);
-        return {
-          success: false,
-          fileName: path.basename(filePath),
-          error: err.message,
-        };
-      }
-    }
-  }
-};
-
-// Main upload handler
-export const handleBoxUpload = async (
-  caseId: string,
-  userToken: string,
-  patientFolderName: string | null,
-  tokenFolderId: string | null,
-  caseFolderId: string | null,
-  files: string[]
-) => {
-  if (
-    !caseId ||
-    !userToken ||
-    !patientFolderName ||
-    !caseFolderId ||
-    !files?.length
-  ) {
-    console.log("case Id : ",caseId)
-    console.log("user Token : ",userToken)
-    console.log("Patient Name : ",patientFolderName)
-    console.log("caseFolderId : ",caseFolderId)
-    console.log("files : ",files)
-    throw new Error("Missing required parameters");
-  }
-
-  const accessToken = await getBoxAccessToken();
-
-  // Create TS_Uploads folder under caseFolderId
-  const tsUploadFolderId = await getOrCreateFolder(
-    caseFolderId,
-    "TS_Uploads",
-    accessToken
-  );
-
-  // Create patient folder under TS_Uploads
-  const patientFolderId = await getOrCreateFolder(
-    tsUploadFolderId,
-    patientFolderName,
-    accessToken
-  );
-
-  // Group files by type
-  const folderNameMap: Record<string, string> = {
-    DOWNLOADS: "Downloads",
-    PREVIEW_FILES: "Previews",
-  };
-  const filesByType: Record<string, string[]> = {};
-  for (const filePath of files) {
-    const fileType = getFileTypeFolder(filePath);
-    if (!filesByType[fileType]) filesByType[fileType] = [];
-    filesByType[fileType].push(filePath);
-  }
-
-  // Create folders for each type
-  const folderIdsByType: Record<string, string> = {};
-  for (const fileType of Object.keys(filesByType)) {
-    const targetFolderName = folderNameMap[fileType] || fileType;
-    folderIdsByType[fileType] = await getOrCreateFolder(
-      patientFolderId,
-      targetFolderName,
-      accessToken
-    );
-  }
-
-  // Flatten all files with type
-  const allFiles = Object.entries(filesByType).flatMap(
-    ([fileType, filePaths]) =>
-      filePaths.map((filePath) => ({ filePath, fileType }))
-  );
-
-  // Use p-limit for controlled concurrency
-  const CONCURRENCY_LIMIT = 5;
-  const limit = pLimit(CONCURRENCY_LIMIT);
-
-  const uploadedFiles = await Promise.all(
-    allFiles.map(({ filePath, fileType }) =>
-      limit(() =>
-        uploadWithRetry(filePath, folderIdsByType[fileType], accessToken).then(
-          (result) => ({
-            ...result,
-            file_type: fileType,
-          })
-        )
-      )
-    )
-  );
-
-  return {
-    userToken,
-    caseId,
-    patientFolderName,
-    uploadedFiles,
-    userId: 1,
-  };
-};

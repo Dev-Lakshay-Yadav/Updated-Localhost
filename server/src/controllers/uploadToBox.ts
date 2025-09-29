@@ -38,39 +38,22 @@ export const uploadToBox = async (req: Request, res: Response) => {
       files
     );
 
+    const newFolderPath = path.join(folderPath, "AAA -- U");
+    await fs.mkdir(newFolderPath, { recursive: true });
+
     await axios.post(
       `${process.env.PORTAL_URL}/api/localUploader/upload-details`,
       summary
     );
-
-    const newFolderPath = path.join(folderPath, "AAA -- U");
-
-    await fs.mkdir(newFolderPath, { recursive: true });
 
     res
       .status(200)
       .json({ message: "Case files uploaded successfully", summary });
   } catch (error: any) {
     console.error("Error in uploadToBox:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message || "Internal server error" });
   }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 export const getFilesInFolder = async (
   folderPath: string
@@ -78,9 +61,17 @@ export const getFilesInFolder = async (
   try {
     const entries = await fs.readdir(folderPath, { withFileTypes: true });
 
-    const files = entries
-      .filter((entry) => entry.isFile())
-      .map((file) => path.join(folderPath, file.name));
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const fullPath = path.join(folderPath, entry.name);
+      if (entry.isFile()) {
+        files.push(fullPath);
+      } else if (entry.isDirectory()) {
+        const subFiles = await getFilesInFolder(fullPath);
+        files.push(...subFiles);
+      }
+    }
 
     return files;
   } catch (error: any) {
