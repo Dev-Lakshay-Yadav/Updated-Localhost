@@ -15,75 +15,54 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
   const [uploadedFolders, setUploadedFolders] = useState<
     Record<string, boolean>
   >({});
+  const [uploadError, setUploadError] = useState<Record<string, boolean>>({});
   const [filterStatus, setFilterStatus] = useState<Folder["status"] | "all">(
     "all"
   );
+  const [selectedFolders, setSelectedFolders] = useState<
+    Record<string, boolean>
+  >({});
 
-  const [confirmFolder, setConfirmFolder] = useState<Folder | null>(null); // Track folder to confirm
-
-  const handleUpload = async (folderPath: string) => {
-    if (uploading[folderPath] || uploadedFolders[folderPath]) return;
-
-    // Close modal immediately
-    setConfirmFolder(null);
-
-    // Mark as uploading
-    setUploading((prev) => ({ ...prev, [folderPath]: true }));
-
-    try {
-      const res = await fetch("http://localhost:5000/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath }),
-      });
-
-      if (!res.ok) throw new Error("Upload failed");
-      await res.json();
-
-      setUploadedFolders((prev) => ({ ...prev, [folderPath]: true }));
-    } catch (err) {
-      console.error("❌ Error uploading:", err);
-    } finally {
-      setUploading((prev) => ({ ...prev, [folderPath]: false }));
-    }
+  const toggleFolderSelection = (folderPath: string) => {
+    setSelectedFolders((prev) => ({
+      ...prev,
+      [folderPath]: !prev[folderPath],
+    }));
   };
 
-  const renderButton = (folder: Folder) => {
-    const isAlreadyUploaded =
-      uploadedFolders[folder.path] ||
-      folder.status === "uploaded" ||
-      folder.status === "portal upload";
-
-    if (isAlreadyUploaded) {
-      return (
-        <button
-          disabled
-          className="px-4 py-2 rounded font-semibold bg-gray-300 text-gray-500 cursor-not-allowed"
-        >
-          Uploaded
-        </button>
-      );
-    }
-
-    if (uploading[folder.path]) {
-      return (
-        <button
-          disabled
-          className="px-4 py-2 rounded font-semibold bg-blue-500 text-white cursor-wait"
-        >
-          Uploading…
-        </button>
-      );
-    }
-
-    return (
-      <button
-        className="px-4 py-2 rounded cursor-pointer font-semibold bg-green-500 hover:bg-green-600 text-white"
-        onClick={() => setConfirmFolder(folder)} // show modal on click
-      >
-        Upload
-      </button>
+  const handleUploadSelected = async () => {
+    // Get selected folder paths that are not yet uploaded
+    const pathsToUpload = Object.keys(selectedFolders).filter(
+      (path) => selectedFolders[path] && !uploadedFolders[path]
     );
+
+    for (const path of pathsToUpload) {
+      // Mark as uploading
+      setUploading((prev) => ({ ...prev, [path]: true }));
+      setUploadError((prev) => ({ ...prev, [path]: false }));
+
+      try {
+        const res = await fetch("http://localhost:5000/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderPath: path }),
+        });
+
+        if (!res.ok) throw new Error(`Upload failed for ${path}`);
+        await res.json();
+
+        // Mark as uploaded
+        setUploadedFolders((prev) => ({ ...prev, [path]: true }));
+        // Deselect folder after upload
+        setSelectedFolders((prev) => ({ ...prev, [path]: false }));
+      } catch (err) {
+        console.error("❌ Error uploading:", err);
+        setUploadError((prev) => ({ ...prev, [path]: true }));
+      } finally {
+        // Done uploading
+        setUploading((prev) => ({ ...prev, [path]: false }));
+      }
+    }
   };
 
   const filteredFolders = useMemo(() => {
@@ -100,7 +79,7 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
   }, [folders]);
 
   return (
-    <div className="overflow-x-auto p-4 bg-white shadow-md rounded-lg">
+    <div className="overflow-x-auto p-4 bg-white shadow-md rounded-lg relative">
       {/* Filter + Counts */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
         <div className="flex flex-wrap gap-4 text-gray-700">
@@ -137,9 +116,9 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
         <thead>
           <tr className="bg-gray-50 text-left">
             <th className="px-4 py-2">#</th>
+            <th className="px-4 py-2">Select</th>
             <th className="px-4 py-2">Folder Name</th>
             <th className="px-4 py-2">Path</th>
-            <th className="px-4 py-2 text-center">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -150,51 +129,62 @@ const FolderTable: React.FC<FolderTableProps> = ({ folders }) => {
               </td>
             </tr>
           ) : (
-            filteredFolders.map((folder, index) => (
-              <tr
-                key={folder.path}
-                className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
-              >
-                <td className="px-4 py-3">{index + 1}</td>
-                <td className="px-4 py-3 font-medium">{folder.name}</td>
-                <td className="px-4 py-3 text-gray-500 text-sm truncate">
-                  {folder.path}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  {renderButton(folder)}
-                </td>
-              </tr>
-            ))
+            filteredFolders.map((folder, index) => {
+              const isAlreadyUploaded =
+                uploadedFolders[folder.path] ||
+                folder.status === "uploaded" ||
+                folder.status === "portal upload";
+
+              // Dynamic row background
+              let rowClass = "bg-white";
+              if (uploading[folder.path])
+                rowClass = "bg-yellow-100 animate-pulse";
+              else if (uploadError[folder.path]) rowClass = "bg-red-100";
+              else if (
+                uploadedFolders[folder.path] ||
+                folder.status === "uploaded"
+              )
+                rowClass = "bg-green-100";
+
+              return (
+                <tr
+                  key={folder.path}
+                  className={`${rowClass} rounded-lg shadow-sm hover:shadow-md transition-shadow`}
+                >
+                  <td className="px-4 py-3">{index + 1}</td>
+                  <td className="px-4 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      disabled={isAlreadyUploaded || uploading[folder.path]}
+                      checked={!!selectedFolders[folder.path]}
+                      onChange={() => toggleFolderSelection(folder.path)}
+                    />
+                  </td>
+                  <td className="px-4 py-3 font-medium">{folder.name}</td>
+                  <td className="px-4 py-3 text-gray-500 text-sm truncate">
+                    {folder.path}
+                  </td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
 
-      {/* Confirm Modal */}
-      {confirmFolder && (
-        <div className="absolute inset-0 flex items-center justify-center z-50">
-          <div className="bg-white shadow-2xl rounded-lg p-6 w-80">
-            <h2 className="text-lg font-semibold mb-4">Confirm Upload</h2>
-            <p className="mb-6 text-gray-700">
-              Are you sure you want to upload{" "}
-              <strong>{confirmFolder.name}</strong>?
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmFolder(null)}
-                className="px-4 py-2 rounded bg-gray-300 hover:bg-gray-400 text-gray-700 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleUpload(confirmFolder.path)}
-                className="px-4 py-2 rounded bg-green-500 hover:bg-green-600 text-white font-semibold cursor-pointer"
-              >
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Upload Selected Button */}
+      <div className="mt-4 flex justify-end">
+        <button
+          onClick={handleUploadSelected}
+          disabled={
+            Object.keys(selectedFolders).filter(
+              (key) => selectedFolders[key] && !uploadedFolders[key]
+            ).length === 0
+          }
+          className="px-4 py-2 rounded bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Upload Selected
+        </button>
+      </div>
     </div>
   );
 };
