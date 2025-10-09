@@ -7,6 +7,7 @@ interface FolderInfo {
   status: "uploaded" | "portal upload" | "pending";
 }
 
+// Build allowed RT folders for today and the last 2 days
 function buildAllowedRtFolders(): Set<string> {
   const today = new Date();
   const allowed = new Set<string>();
@@ -15,16 +16,21 @@ function buildAllowedRtFolders(): Set<string> {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
 
-    const day = String(d.getDate()).padStart(2, "0");
+    const day = d.getDate(); // no zero padding
     const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
     const year = d.getFullYear();
 
-    allowed.add(`RT-${day} ${month} ${year}`);
+    // allow both formats: RT-4 OCT 2025 and RT-04 OCT 2025
+    allowed.add(`RT-${day} ${month} ${year}`.toUpperCase());
+    allowed.add(
+      `RT-${String(day).padStart(2, "0")} ${month} ${year}`.toUpperCase()
+    );
   }
 
   return allowed;
 }
 
+// Check if folder name matches one of the allowed RT folder names
 function isRtFolder(name: string, allowed: Set<string>): boolean {
   return allowed.has(name.toUpperCase());
 }
@@ -34,15 +40,26 @@ export function getCaseFolders(root: string): FolderInfo[] {
   const allowedRtFolders = buildAllowedRtFolders();
 
   const rtFolders = fs.readdirSync(root, { withFileTypes: true });
+
   for (const rtFolder of rtFolders) {
-    if (!rtFolder.isDirectory() || !isRtFolder(rtFolder.name, allowedRtFolders)) continue;
+    if (!rtFolder.isDirectory() || !isRtFolder(rtFolder.name, allowedRtFolders))
+      continue;
 
     const rtPath = path.join(root, rtFolder.name);
+
     const deptFolders = fs.readdirSync(rtPath, { withFileTypes: true });
+
     for (const deptFolder of deptFolders) {
       if (!deptFolder.isDirectory()) continue;
 
-      const exportPath = path.join(rtPath, deptFolder.name, "EXPORT - External");
+      // 🚨 Skip REDESIGN dept folder
+      if (deptFolder.name.toUpperCase() === "REDESIGN") continue;
+
+      const exportPath = path.join(
+        rtPath,
+        deptFolder.name,
+        "EXPORT - External"
+      );
       if (!fs.existsSync(exportPath)) continue;
 
       const caseFolders = fs.readdirSync(exportPath, { withFileTypes: true });
@@ -52,8 +69,14 @@ export function getCaseFolders(root: string): FolderInfo[] {
         const casePath = path.join(exportPath, caseFolder.name);
         const prefix = caseFolder.name.split(" -- ")[0] + " --";
 
-        const subFolders = fs.readdirSync(casePath, { withFileTypes: true })
-          .filter(d => d.isDirectory() && d.name.startsWith(prefix));
+        const subFolders = fs
+          .readdirSync(casePath, { withFileTypes: true })
+          .filter(
+            (d) =>
+              d.isDirectory() &&
+              d.name.startsWith(prefix) &&
+              d.name.toUpperCase() !== "REDESIGN" // skip redesign at case level too
+          );
 
         if (subFolders.length > 0) {
           for (const sub of subFolders) {
@@ -74,12 +97,13 @@ export function getCaseFolders(root: string): FolderInfo[] {
       }
     }
   }
-
   return results;
 }
 
 // Optimized: early return instead of building big arrays
-function getFolderStatus(casePath: string): "uploaded" | "portal upload" | "pending" {
+function getFolderStatus(
+  casePath: string
+): "uploaded" | "portal upload" | "pending" {
   const subFolders = fs.readdirSync(casePath, { withFileTypes: true });
   for (const d of subFolders) {
     if (!d.isDirectory()) continue;

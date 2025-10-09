@@ -64,13 +64,10 @@ export const getFilesInFolder = async (
     const files: string[] = [];
 
     for (const entry of entries) {
-      const fullPath = path.join(folderPath, entry.name);
       if (entry.isFile()) {
-        files.push(fullPath);
-      } else if (entry.isDirectory()) {
-        const subFiles = await getFilesInFolder(fullPath);
-        files.push(...subFiles);
+        files.push(path.join(folderPath, entry.name));
       }
+      // 👇 skip subfolders, no recursion
     }
 
     return files;
