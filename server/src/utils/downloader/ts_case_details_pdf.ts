@@ -24,7 +24,14 @@ interface CaseDetails {
 }
 
 interface CaseActivity {
-  type: "system_update" | "admin_comment" | "user_comment" | string;
+  type:
+    | "system_update"
+    | "admin_comment"
+    | "super admin_comment"
+    | "crm_comment"
+    | "user_comment"
+    | "Redesign_update"
+    | string;
   timestamp: number; // unix timestamp
   content: string;
 }
@@ -70,9 +77,7 @@ export function generateCasePDF(
                 instanceFieldKey === "toothNumbers" &&
                 Array.isArray(instance["toothNumbers"])
               ) {
-                return (
-                  "Tooth Numbers: " + instance["toothNumbers"].join(",")
-                );
+                return "Tooth Numbers: " + instance["toothNumbers"].join(",");
               }
               return (
                 convertKey(instanceFieldKey) + ": " + instance[instanceFieldKey]
@@ -130,54 +135,97 @@ export function generateCommentsPDF(
 ): void {
   const doc = new PDFGenerator();
   doc.pipe(fs.createWriteStream(filePath));
-  doc.fontSize(24).text(`Comments for TS-${caseId}`).moveDown();
 
-  doc
-    .fontSize(20)
-    .text(`Case Redesign Priority ${priority}`)
-    .moveDown()
-    .moveDown();
+  // Header
+  doc.fontSize(24).text(`Comments for TS-${caseId}`);
+  doc.moveDown();
+  doc.fontSize(20).text(`Case Redesign Priority ${priority}`);
+  doc.moveDown();
+  doc.moveDown();
+
+  console.log("redesign CaseActivities : ", caseActivities);
 
   for (const activity of caseActivities) {
-    if (activity.type === "system_update") {
+    if (
+      activity.type === "system_update" ||
+      activity.type === "Redesign_update"
+    ) {
       continue;
     }
 
-    const author =
-      activity.type === "admin_comment" ? "ToothSketch Team" : "User";
-    doc
-      .fontSize(10)
-      .text(new Date(activity.timestamp * 1000).toLocaleString())
-      .moveDown();
-    doc.fontSize(12).text(`${author.toUpperCase()}: `);
-    doc.fontSize(12).text(activity.content).moveDown().moveDown();
+    const isTeamComment =
+      activity.type === "admin_comment" ||
+      activity.type === "super admin_comment" ||
+      activity.type === "crm_comment";
+
+    const author = isTeamComment ? "ToothSketch Team" : "Client";
+
+    // Set color for author
+    if (isTeamComment) {
+      doc.fillColor("red");
+    } else {
+      doc.fillColor("black");
+    }
+
+    // Author + content on same line
+    doc.fontSize(12).text(`${author.toUpperCase()} :   ${activity.content}`);
+
+    // Timestamp after comment in gray
+    doc.fillColor("gray");
+    doc.fontSize(10).text(new Date(activity.timestamp * 1000).toLocaleString());
+
+    // Extra spacing between comments
+    doc.moveDown();
   }
 
   doc.end();
 }
 
+// export function generateCommentsPDF(
+//   caseId: string,
+//   caseActivities: CaseActivity[],
+//   priority: string,
+//   filePath: string
+// ): void {
+//   const doc = new PDFGenerator();
+//   doc.pipe(fs.createWriteStream(filePath));
+//   doc.fontSize(24).text(`Comments for TS-${caseId}`).moveDown();
 
+//   doc
+//     .fontSize(20)
+//     .text(`Case Redesign Priority ${priority}`)
+//     .moveDown()
+//     .moveDown();
 
+//   console.log("redesign CaseActivities : ", caseActivities);
 
+//   for (const activity of caseActivities) {
+//     if (
+//       activity.type === "system_update" ||
+//       activity.type === "Redesign_update"
+//     ) {
+//       continue;
+//     }
 
+//     const author =
+//       activity.type === "admin_comment" ||
+//       activity.type === "super admin_comment" ||
+//       activity.type === "crm_comment"
+//         ? "ToothSketch Team"
+//         : "User";
+//     doc
+//       .fontSize(10)
+//       .text(new Date(activity.timestamp * 1000).toLocaleString())
+//       .moveDown();
+//     doc.fontSize(12).text(`${author.toUpperCase()}: `);
+//     doc.fontSize(12).text(activity.content).moveDown().moveDown();
+//   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+//   doc.end();
+// }
 
 // import fs from 'fs'
 // import PDFGenerator from 'pdfkit';
-
 
 // export function generateCasePDF(
 //   caseId /* string */,

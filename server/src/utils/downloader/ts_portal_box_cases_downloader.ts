@@ -8,6 +8,7 @@ import {
   INCOMING_CASES_QUERY,
   CONSTANTS_POST_ENDPOINT,
   CONSTANTS_GET_ENDPOINT,
+  UPDATING_CASEFILES_AND_CASEUNITS,
 } from "./ts_constants.js";
 import {
   ensureLabFolderExists,
@@ -17,6 +18,7 @@ import {
 import { generateCasePDF } from "./ts_case_details_pdf.js";
 import { processRedesigns } from "./ts_portal_redesigns_downloader.js";
 import { getClient } from "../../config/box.js";
+import path from "path";
 
 // -------------------- Interfaces --------------------
 
@@ -70,7 +72,7 @@ export function processCases(client: any): void {
 
     const now = Math.round(new Date().getTime() / 1000);
     const prev = parseInt(response.data["value"]);
-    if (prev + 4 * 60 > now) {
+    if (prev + 60 > now) {
       console.log("Its already running!");
       return;
     }
@@ -176,7 +178,12 @@ export function processCaseImpl(
 ): void {
   const services = (JSON.parse(caseDetails.details_json) as ParsedCaseDetails)
     .services;
-  console.log("processCaseImpl called and caseDetails is : ", caseDetails);
+  console.log(
+    "processCaseImpl called and caseDetails is : ",
+    caseId,
+    "and",
+    JSON.parse(caseDetails.details_json)
+  );
 
   client.folders
     .getItems(folderId, {
@@ -195,7 +202,7 @@ export function processCaseImpl(
       }
 
       const fileDownloadPromises = files.map((file) =>
-        downloadFile(client, file.id, file.name, caseId)
+        downloadFile(client, file.id, file.name, caseId, services)
       );
 
       Promise.allSettled(fileDownloadPromises)
@@ -212,13 +219,43 @@ export function processCaseImpl(
             resolve(`Resolving ${caseId}, but we could not download the files`);
             return;
           }
+
           try {
+            // generate case PDF
             generateCasePDF(
               caseId,
               JSON.parse(caseDetails.details_json),
               getFilePath(caseId, "CaseDetails.pdf", "IMPORT")
             );
-            resolve(caseId + " finished downloading and creating caseDetails");
+
+            // send API update (re-added from old function)
+            const toLog = {
+              case_id: caseId,
+              case_file: "Unzipping paused",
+              queue_status: "Needs prep work",
+              current_allocation: "None",
+              case_units: [],
+            };
+            console.log(`Intentionally not unzipping ${caseId}`);
+            console.log(toLog);
+
+            axios
+              .post(UPDATING_CASEFILES_AND_CASEUNITS, toLog, {
+                headers: { "Content-Type": "application/json" },
+              })
+              .then((response) => {
+                console.log("api triggered");
+                console.log(response.data);
+                resolve(
+                  caseId + " finished downloading and creating caseDetails"
+                );
+              })
+              .catch((err) => {
+                console.log("Failed posting to API", err);
+                resolve(
+                  `Resolving ${caseId} but API post failed: ${err.message}`
+                );
+              });
           } catch (e) {
             console.log("Failed to generate CaseDetails.pdf for " + caseId);
             resolve([`Resolving ${caseId} with error`, e]);
@@ -232,7 +269,8 @@ export function downloadFile(
   client: any,
   fileId: string,
   fileName: string,
-  caseId: string
+  caseId: string,
+  services: any
 ): Promise<string> {
   console.log(`Downloading ${fileName} (${fileId})`);
   return new Promise((resolve, reject) => {
@@ -242,12 +280,53 @@ export function downloadFile(
         return;
       }
 
+      let exportFolderPath: string | null = null;
+
+      if (!services || Object.keys(services).length === 0) {
+        // Base export folder
+        const folderPath = getFilePath(caseId, fileName, "EXPORT - External");
+
+        // If the file is a ZIP, create a subfolder `${caseId} -- ${basename}`
+        if (path.extname(fileName).toLowerCase() === ".zip") {
+          const baseName = path.basename(fileName, ".zip");
+          exportFolderPath = path.join(
+            path.dirname(folderPath),
+            `${caseId.slice(0, 7)} -- ${baseName}`
+          );
+          if (!fs.existsSync(exportFolderPath)) {
+            fs.mkdirSync(exportFolderPath, { recursive: true });
+          }
+        }
+      }
+
+      // Always save the file into IMPORT folder
       const filePath = getFilePath(caseId, fileName, "IMPORT");
       const dest = fs.createWriteStream(filePath);
 
       stream
-        .on("end", () => {
-          console.log(`Done downloading file - ${caseId} ${fileName}`);
+        .on("end", async () => {
+          console.log(`Downloaded file - ${caseId} ${fileName}`);
+
+          // If no services + ZIP, extract inside IMPORT
+          if (
+            (!services || Object.keys(services).length === 0) &&
+            path.extname(fileName).toLowerCase() === ".zip"
+          ) {
+            try {
+              const importDir = path.dirname(filePath);
+              console.log(`Extracting ZIP into ${importDir}`);
+              await fs
+                .createReadStream(filePath)
+                .pipe(unzipper.Extract({ path: importDir }))
+                .promise();
+              console.log(`Extraction complete for ${fileName}`);
+            } catch (extractErr) {
+              console.error("Error extracting zip:", extractErr);
+              reject(extractErr);
+              return;
+            }
+          }
+
           resolve(filePath);
         })
         .on("error", (err: Error) => {
@@ -259,109 +338,113 @@ export function downloadFile(
   });
 }
 
-export function getUnitProperty(
-  unit: UnitElement,
-  propertyName: string
-): string {
-  return unit.elements!.filter((p) => p.attributes.name === propertyName)[0]
-    .attributes.value;
-}
+//      !@!@!@!@!@!!@           unused functions            @!@!@!@!@!@!@
 
-export function unzipCaseFiles(
-  filePath: string,
-  fileName: string,
-  caseId: string
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log(`Unzipping ${filePath}`);
-      const fileNameWithoutExtension = fileName
-        .split(".")
-        .slice(0, -1)
-        .join(".");
-      const outputPath = filePath.split("/").slice(0, -1).join("/");
+// export function getUnitProperty(
+//   unit: UnitElement,
+//   propertyName: string
+// ): string {
+//   return unit.elements!.filter((p) => p.attributes.name === propertyName)[0]
+//     .attributes.value;
+// }
 
-      fs.createReadStream(filePath)
-        .pipe(
-          unzipper
-            .Extract({ path: outputPath })
-            .on("error", () => reject("Unzip parse error for " + caseId))
-        )
-        .on("close", () =>
-          fs.readdir(outputPath, (err, files) => {
-            if (err) {
-              reject({ err, filePath, fileName, caseId });
-              return;
-            }
-            const unzippedName = files.filter((f) =>
-              fileNameWithoutExtension.includes(f)
-            )[0];
+// export function unzipCaseFiles(
+//   filePath: string,
+//   fileName: string,
+//   caseId: string
+// ): Promise<unknown> {
+//   return new Promise((resolve, reject) => {
+//     try {
+//       console.log(`Unzipping ${filePath}`);
+//       const fileNameWithoutExtension = fileName
+//         .split(".")
+//         .slice(0, -1)
+//         .join(".");
+//       const outputPath = filePath.split("/").slice(0, -1).join("/");
 
-            fs.readFile(
-              `${outputPath}/${unzippedName}/${unzippedName}.xml`,
-              "utf-8",
-              (err, fileContent) => {
-                try {
-                  const json = xml_to_json.xml2json(fileContent, {
-                    compact: false,
-                    spaces: 4,
-                  });
+//       fs.createReadStream(filePath)
+//         .pipe(
+//           unzipper
+//             .Extract({ path: outputPath })
+//             .on("error", () => reject("Unzip parse error for " + caseId))
+//         )
+//         .on("close", () =>
+//           fs.readdir(outputPath, (err, files) => {
+//             if (err) {
+//               reject({ err, filePath, fileName, caseId });
+//               return;
+//             }
+//             const unzippedName = files.filter((f) =>
+//               fileNameWithoutExtension.includes(f)
+//             )[0];
 
-                  const teethUnits = JSON.parse(
-                    json
-                  ).elements[0].elements[0].elements.filter(
-                    (e: any) => e.attributes.name === "ToothElementList"
-                  )[0].elements[0].elements;
+//             fs.readFile(
+//               `${outputPath}/${unzippedName}/${unzippedName}.xml`,
+//               "utf-8",
+//               (err, fileContent) => {
+//                 try {
+//                   const json = xml_to_json.xml2json(fileContent, {
+//                     compact: false,
+//                     spaces: 4,
+//                   });
 
-                  let case_units: CaseUnit[];
-                  if (!teethUnits) {
-                    case_units = [
-                      {
-                        tooth_number: 0,
-                        abutment_kit_id: null,
-                        anatomical: false,
-                        post_and_core: false,
-                        cache_tooth_type_class: "",
-                        unit_type: "Digital Model",
-                      },
-                    ];
-                  } else {
-                    case_units = teethUnits.map((unit: UnitElement) => ({
-                      tooth_number: parseInt(
-                        getUnitProperty(unit, "ToothNumber")
-                      ),
-                      abutment_kit_id: getUnitProperty(unit, "AbutmentKitID"),
-                      anatomical:
-                        getUnitProperty(unit, "Anatomical") !== "False",
-                      post_and_core:
-                        getUnitProperty(unit, "PostAndCore") !== "False",
-                      cache_tooth_type_class: getUnitProperty(
-                        unit,
-                        "CacheToothTypeClass"
-                      ),
-                      unit_type: "Tooth",
-                    }));
-                  }
+//                   const teethUnits = JSON.parse(
+//                     json
+//                   ).elements[0].elements[0].elements.filter(
+//                     (e: any) => e.attributes.name === "ToothElementList"
+//                   )[0].elements[0].elements;
 
-                  resolve({
-                    case_id: caseId,
-                    case_file: fileNameWithoutExtension,
-                    queue_status: "Ready for design",
-                    current_allocation: "None",
-                    case_units,
-                  });
-                } catch (err) {
-                  reject(err);
-                }
-              }
-            );
-          })
-        );
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
+//                   let case_units: CaseUnit[];
+//                   if (!teethUnits) {
+//                     case_units = [
+//                       {
+//                         tooth_number: 0,
+//                         abutment_kit_id: null,
+//                         anatomical: false,
+//                         post_and_core: false,
+//                         cache_tooth_type_class: "",
+//                         unit_type: "Digital Model",
+//                       },
+//                     ];
+//                   } else {
+//                     case_units = teethUnits.map((unit: UnitElement) => ({
+//                       tooth_number: parseInt(
+//                         getUnitProperty(unit, "ToothNumber")
+//                       ),
+//                       abutment_kit_id: getUnitProperty(unit, "AbutmentKitID"),
+//                       anatomical:
+//                         getUnitProperty(unit, "Anatomical") !== "False",
+//                       post_and_core:
+//                         getUnitProperty(unit, "PostAndCore") !== "False",
+//                       cache_tooth_type_class: getUnitProperty(
+//                         unit,
+//                         "CacheToothTypeClass"
+//                       ),
+//                       unit_type: "Tooth",
+//                     }));
+//                   }
+
+//                   resolve({
+//                     case_id: caseId,
+//                     case_file: fileNameWithoutExtension,
+//                     queue_status: "Ready for design",
+//                     current_allocation: "None",
+//                     case_units,
+//                   });
+//                 } catch (err) {
+//                   reject(err);
+//                 }
+//               }
+//             );
+//           })
+//         );
+//     } catch (err) {
+//       reject(err);
+//     }
+//   });
+// }
+
+//       @#@#@#@#@#@#     old code        #@#@#@#@#@#@#@
 
 // import fs from "fs";
 // import unzipper from "unzipper";

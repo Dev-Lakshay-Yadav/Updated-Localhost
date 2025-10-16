@@ -10,10 +10,7 @@ import {
   ensureRedesignFolderExists,
   getRedesignFolderPath,
 } from "./ts_folder_structure.js";
-import {
-  generateCasePDF,
-  generateCommentsPDF,
-} from "./ts_case_details_pdf.js";
+import { generateCasePDF, generateCommentsPDF } from "./ts_case_details_pdf.js";
 
 import { getClient } from "../../config/box.js";
 
@@ -55,7 +52,9 @@ export function processRedesigns(): void {
     url: INCOMING_REDESIGNS_QUERY,
   }).then(async (response) => {
     getClient(async (client: BoxClient) => {
+      
       for (const caseDetails of response.data.cases) {
+        console.log("redesign case data : ",caseDetails)
         const priority = caseDetails.priority.toUpperCase();
         caseDetails.casePriority = priority.toUpperCase();
         const creationTimeMs = caseDetails.creation_time_ms;
@@ -64,7 +63,11 @@ export function processRedesigns(): void {
         ensureRedesignFolderExists(rdCaseId, creationTimeMs);
 
         const boxFolderId = caseDetails.box_folder_id;
-        await processFolder(client, boxFolderId, getRedesignFolderPath(rdCaseId));
+        await processFolder(
+          client,
+          boxFolderId,
+          getRedesignFolderPath(rdCaseId)
+        );
 
         const detailsJson = JSON.parse(caseDetails.details_json);
         detailsJson.casePriority = `[REDESIGN PRIORITY] ${priority}`;
@@ -82,7 +85,7 @@ export function processRedesigns(): void {
         try {
           generateCommentsPDF(
             caseDetails.case_id,
-            JSON.parse(JSON.parse(caseDetails.case_activities)),
+            JSON.parse(caseDetails.case_activities),
             priority,
             path.join(getRedesignFolderPath(rdCaseId), "Comments.pdf")
           );
@@ -91,9 +94,7 @@ export function processRedesigns(): void {
           console.log("Failed to generate Comments.pdf for " + rdCaseId);
         }
 
-        console.log(
-          `Completed redesign processing for ${caseDetails.case_id}`
-        );
+        console.log(`Completed redesign processing for ${caseDetails.case_id}`);
 
         axios
           .post(
@@ -101,6 +102,7 @@ export function processRedesigns(): void {
             {
               case_id: caseDetails.case_id.split(" -- ")[0],
               status: "downloaded",
+              redesign_attempt : caseDetails?.redesign_attempt
             },
             { headers: { "Content-Type": "application/json" } }
           )
@@ -128,7 +130,7 @@ export async function processFolder(
 
   for (const item of items.entries) {
     if (item.type === "file") {
-      console.log(`Downloading file: ${item.name}`);
+      console.log(`Downloading Redesign file: ${item.name}`);
       await downloadFile(client, item.id, item.name, downloadPath);
     } else if (item.type === "folder") {
       console.log(`Entering folder: ${item.name}`);
@@ -153,30 +155,6 @@ export async function downloadFile(
     writeStream.on("error", (err) => reject(err));
   });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // import axios from "axios";
 // import fs from "fs";
