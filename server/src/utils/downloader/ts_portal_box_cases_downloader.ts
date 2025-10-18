@@ -72,7 +72,7 @@ export function processCases(client: any): void {
 
     const now = Math.round(new Date().getTime() / 1000);
     const prev = parseInt(response.data["value"]);
-    if (prev + 60 > now) {
+    if (prev + 4 * 60 > now) {
       console.log("Its already running!");
       return;
     }
