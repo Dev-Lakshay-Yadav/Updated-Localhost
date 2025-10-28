@@ -208,7 +208,6 @@ export const handleBoxUpload = async (
   caseId: string,
   userToken: string,
   patientFolderName: string | null,
-  tokenFolderId: string | null,
   caseFolderId: string | null,
   files: string[]
 ) => {
