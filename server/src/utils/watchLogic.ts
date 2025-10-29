@@ -22,7 +22,9 @@ function buildAllowedRtFolders(): Set<string> {
     const year = d.getFullYear();
 
     allowed.add(`RT-${day} ${month} ${year}`.toUpperCase());
-    allowed.add(`RT-${String(day).padStart(2, "0")} ${month} ${year}`.toUpperCase());
+    allowed.add(
+      `RT-${String(day).padStart(2, "0")} month ${year}`.toUpperCase()
+    );
   }
 
   return allowed;
@@ -30,6 +32,24 @@ function buildAllowedRtFolders(): Set<string> {
 
 function isRtFolder(name: string, allowed: Set<string>): boolean {
   return allowed.has(name.toUpperCase());
+}
+
+// 🔹 Folder status logic (shared for both normal + redesign)
+function getFolderStatus(
+  casePath: string
+): "uploaded" | "portal upload" | "pending" {
+  // Check if the path exists first to avoid fs.readdirSync error on non-existent paths
+  if (!fs.existsSync(casePath) || !fs.statSync(casePath).isDirectory())
+    return "pending";
+
+  const items = fs.readdirSync(casePath, { withFileTypes: true });
+  for (const d of items) {
+    if (!d.isDirectory()) continue;
+    const upper = d.name.toUpperCase();
+    if (upper === "AAA -- P") return "portal upload";
+    if (upper === "AAA -- U") return "uploaded";
+  }
+  return "pending";
 }
 
 export function getCaseFolders(root: string): FolderInfo[] {
@@ -51,29 +71,69 @@ export function getCaseFolders(root: string): FolderInfo[] {
 
       // 🔸 Case 1: REDESIGN folder inside RT
       if (inner.name.toUpperCase() === "REDESIGN") {
-        const redesignPath = path.join(rtPath, inner.name);
-        const redesignCases = fs.readdirSync(redesignPath, { withFileTypes: true });
+        const redesignPath = path.join(rtPath, inner.name); // e.g., .../RT-DATE/REDESIGN
+        const redesignCases = fs.readdirSync(redesignPath, {
+          withFileTypes: true,
+        });
 
         for (const redesignCase of redesignCases) {
+          // redesignCase.name is the top-level case name
           if (!redesignCase.isDirectory()) continue;
 
-          const casePath = path.join(redesignPath, redesignCase.name);
+          const topCasePath = path.join(redesignPath, redesignCase.name); // e.g., .../REDESIGN/CaseName
+          const tsUploadsPath = path.join(topCasePath, "TS_Uploads");
 
-          // Collect client files directly inside redesign case folder
-          const clientFiles = fs
-            .readdirSync(casePath, { withFileTypes: true })
-            .filter((f) => f.isFile())
-            .map((f) => f.name);
+          // Check if TS_Uploads exists inside the CaseName folder
+          if (
+            fs.existsSync(tsUploadsPath) &&
+            fs.statSync(tsUploadsPath).isDirectory()
+          ) {
+            // Found TS_Uploads. Look inside for final patient folders (PatientA, PatientB, etc.)
+            const patientFolders = fs.readdirSync(tsUploadsPath, {
+              withFileTypes: true,
+            });
 
-          // Status based on AAA folders directly inside the case folder
-          const status = getFolderStatus(casePath);
+            for (const patientFolder of patientFolders) {
+              if (!patientFolder.isDirectory()) continue;
 
-          results.push({
-            name: redesignCase.name,
-            path: casePath,
-            status,
-            clientFiles,
-          });
+              // This is the final path we want to track: .../CaseName/TS_Uploads/PatientA
+              const casePath = path.join(tsUploadsPath, patientFolder.name);
+
+              // Collect client files directly inside the patient folder
+              const clientFiles = fs
+                .readdirSync(casePath, { withFileTypes: true })
+                .filter((f) => f.isFile())
+                .map((f) => f.name);
+
+              const status = getFolderStatus(casePath);
+
+              results.push({
+                // MODIFIED: Use the top-level case name instead of the patient folder name
+                name: redesignCase.name,
+                path: casePath,
+                status,
+                clientFiles,
+              });
+            }
+          } else {
+            // No TS_Uploads folder found. Use the CaseName folder itself (original redesign logic).
+            const casePath = topCasePath;
+
+            // Collect client files directly inside redesign case folder
+            const clientFiles = fs
+              .readdirSync(casePath, { withFileTypes: true })
+              .filter((f) => f.isFile())
+              .map((f) => f.name);
+
+            const status = getFolderStatus(casePath);
+
+            results.push({
+              name: redesignCase.name,
+              path: casePath,
+              status,
+              clientFiles,
+            });
+          }
         }
 
         continue; // Skip further recursion for REDESIGN
@@ -120,20 +180,6 @@ export function getCaseFolders(root: string): FolderInfo[] {
   }
 
   return results;
-}
-
-// 🔹 Folder status logic (shared for both normal + redesign)
-function getFolderStatus(casePath: string): "uploaded" | "portal upload" | "pending" {
-  if (!fs.existsSync(casePath)) return "pending";
-
-  const items = fs.readdirSync(casePath, { withFileTypes: true });
-  for (const d of items) {
-    if (!d.isDirectory()) continue;
-    const upper = d.name.toUpperCase();
-    if (upper === "AAA -- P") return "portal upload";
-    if (upper === "AAA -- U") return "uploaded";
-  }
-  return "pending";
 }
 
 // import fs from "fs";

@@ -182,6 +182,34 @@ const uploadLocalFileToBox = async (
   return { success: true, boxFileId, fileName };
 };
 
+const replaceExistingFile = async (
+  fileId: string,
+  filePath: string,
+  accessToken: string
+) => {
+  const fileStream = fs.createReadStream(filePath);
+  const formData = new FormData();
+  formData.append("file", fileStream);
+
+  const response = await axios.post(
+    `https://upload.box.com/api/2.0/files/${fileId}/content`,
+    formData,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...formData.getHeaders(),
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    }
+  );
+
+  const fileName = path.basename(filePath);
+  console.log(`♻️ Replaced existing file: ${fileName}`);
+
+  return { success: true, boxFileId: response.data.entries?.[0]?.id, fileName };
+};
+
 // Retry wrapper for rate-limited uploads
 const uploadWithRetry = async (
   filePath: string,
@@ -193,8 +221,25 @@ const uploadWithRetry = async (
     try {
       return await uploadLocalFileToBox(filePath, folderId, accessToken);
     } catch (err: any) {
-      if (err.response?.status === 429 && attempt < retries) {
-        const waitTime = Math.pow(2, attempt) * 1000; // exponential backoff
+      const status = err.response?.status;
+
+      // ✅ Handle 409 conflict: file already exists → replace it
+      if (status === 409) {
+        const existingFileId = err.response?.data?.context_info?.conflicts?.id;
+        if (existingFileId) {
+          console.log(`⚠️ File already exists. Replacing: ${filePath}`);
+          return await replaceExistingFile(
+            existingFileId,
+            filePath,
+            accessToken
+          );
+        }
+      }
+
+      // Retry for rate-limit (429)
+      if (status === 429 && attempt < retries) {
+        const waitTime = Math.pow(2, attempt) * 1000;
+        console.warn(`⏳ Rate limited. Retrying after ${waitTime}ms...`);
         await new Promise((res) => setTimeout(res, waitTime));
       } else {
         throw new Error(`Failed to upload ${filePath}: ${err.message}`);
@@ -249,6 +294,7 @@ export const handleBoxUpload = async (
       PREVIEW_FILES: "Previews",
     };
     const filesByType: Record<string, string[]> = {};
+
     for (const filePath of files) {
       const fileType = getFileTypeFolder(filePath);
       if (!filesByType[fileType]) filesByType[fileType] = [];
@@ -280,16 +326,19 @@ export const handleBoxUpload = async (
 
     const uploadedFiles = await Promise.all(
       allFiles.map(({ filePath, fileType }) =>
-        limit(() =>
-          uploadWithRetry(
+        limit(async () => {
+          const result = await uploadWithRetry(
             filePath,
             folderIdsByType[fileType],
             accessToken
-          ).then((result) => ({
+          );
+          const file_name = path.basename(filePath);
+          return {
             ...result,
             file_type: fileType,
-          }))
-        )
+            file_name,
+          };
+        })
       )
     );
 
@@ -312,7 +361,6 @@ export const handleBoxUpload = async (
     throw err; // bubble up error to controller
   }
 };
-
 // const sanitizeFileName = (name: string) => name.replace(/[\/\\?%*:|"<>]/g, "_");
 
 // const uploadLocalFileToBox = async (

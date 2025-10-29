@@ -28,70 +28,88 @@ export const uploadToBox = async (req: Request, res: Response) => {
 };
 
 export const uploadRedesigns = async (folderPath: string) => {
-  console.log("🟡 Detected REDESIGN folder. Skipping actual upload.");
-  const lastFolder = folderPath.split(/[/\\]/).pop() || "";
-
-  // ✅ Extract caseId (e.g., TL00002)
-  const match = lastFolder.match(/([A-Z]{2}\d{5})/);
+  const match = folderPath.match(/([A-Z]{2}\d{5})/);
   const caseId = match ? match[1] : null;
 
   if (!caseId) {
-    console.warn("⚠️ Could not extract caseId from folder name:", lastFolder);
-    return {
-      status: "error",
-      message: "Unable to extract caseId from folder name.",
-      folderPath,
-      filesUploaded: [],
-      boxFolderId: null,
-      timestamp: new Date().toISOString(),
-    };
+    throw new Error(`❌ Could not extract caseId from path: ${folderPath}`);
   }
 
   const userToken = caseId.substring(0, 2);
 
-  // ✅ Fetch Box IDs from Portal
   const { data } = await axios.get(
     `${process.env.PORTAL_URL}/api/localUploader/fetchBoxIds/${caseId}`
   );
 
   const { caseFolderId } = data;
-  console.log("Case id:", caseId, "| Box folder:", caseFolderId);
+  if (!caseFolderId) throw new Error(`❌ No caseFolderId found for ${caseId}`);
 
-  // ✅ Locate TS_Uploads and find patient folders
-  const tsUploadsPath = path.join(folderPath, "TS_Uploads");
-  let patientFolderNames: string[] = [];
-
-  try {
-    // Check if TS_Uploads exists
-    await fs.access(tsUploadsPath);
-
-    const subFolders = await fs.readdir(tsUploadsPath, { withFileTypes: true });
-    patientFolderNames = subFolders
-      .filter(
-        (dirent) => dirent.isDirectory() && /^Patient\s*\d+/i.test(dirent.name)
-      )
-      .map((dirent) => dirent.name);
-  } catch (err) {
-    console.warn("⚠️ TS_Uploads folder not found inside:", folderPath);
+  // 🔹 Extract patient folder name (next to "ts_uploads")
+  let patientFolderName = null;
+  const parts = folderPath.split(/[/\\]/);
+  const uploadsIndex = parts.findIndex(
+    (part) => part.toLowerCase() === "ts_uploads"
+  );
+  if (uploadsIndex !== -1) {
+    patientFolderName = parts[uploadsIndex + 1] || null;
   }
 
-  console.log("👥 Detected Patient folders:", patientFolderNames);
+  if (!patientFolderName) {
+    console.warn("⚠️ Could not detect patient folder from path:", folderPath);
+  }
 
-  // ✅ Return summary
-  const dummySummary = {
-    status: "success",
-    message: "REDESIGN folder detected - skipping actual upload.",
-    folderPath,
+  console.log("🧩 Data:", {
+    caseId,
+    caseFolderId,
+    userToken,
+    patientFolderName,
+  });
+
+  // 🔹 Define subfolders to read from
+  const previewPath = path.join(folderPath, "Previews");
+  const downloadPath = path.join(folderPath, "Downloads");
+
+  // 🔹 Collect files only from these two subfolders
+  let allFiles: any[] = [];
+  try {
+    const [previewFiles, downloadFiles] = await Promise.all([
+      getFilesInFolder(previewPath),
+      getFilesInFolder(downloadPath),
+    ]);
+    allFiles = [...previewFiles, ...downloadFiles];
+  } catch (err) {
+    console.error("⚠️ Error reading Previews/Downloads:", err);
+  }
+
+  if (allFiles.length === 0) {
+    console.warn("⚠️ No files found in Previews or Downloads for", folderPath);
+  }
+
+  // 🔹 Upload to Box
+  const summary = await handleBoxUpload(
     caseId,
     userToken,
+    patientFolderName,
     caseFolderId,
-    patientFolders: patientFolderNames,
-    filesUploaded: [],
-    boxFolderId: null,
-    timestamp: new Date().toISOString(),
-  };
+    allFiles
+  );
 
-  return dummySummary;
+  console.log("After upload summary : ",summary)
+
+  // 🔹 Mark upload completion locally
+  const newFolderPath = path.join(folderPath, "AAA -- U");
+  await fs.mkdir(newFolderPath, { recursive: true });
+
+  // 🔹 Notify portal about upload summary
+  await axios.post(
+    `${process.env.PORTAL_URL}/api/localUploader/upload-details`,
+    summary
+  );
+
+  return {
+    message: "Case files uploaded successfully",
+    summary,
+  };
 };
 
 export const uploadNormalCase = async (folderPath: string) => {
