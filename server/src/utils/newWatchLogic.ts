@@ -68,31 +68,54 @@ export const getLiveCases = (basePath: string) => {
       const token = caseId.slice(0, 2);
       const casePath = path.join(basePath, entry.name);
 
-      const patientNames: string[] = [];
+      const patients: {
+        patientName: string;
+        status: string;
+      }[] = [];
 
       try {
         const innerEntries = fs.readdirSync(casePath, { withFileTypes: true });
+
         for (const inner of innerEntries) {
           if (!inner.isDirectory()) continue;
+
           const innerMatch = inner.name.match(LIVE_REGEX);
-          if (innerMatch) {
-            const [, , innerCaseOwner] = innerMatch;
-            patientNames.push(innerCaseOwner.trim());
+          if (!innerMatch) continue;
+
+          const [, , patientName] = innerMatch;
+          const patientPath = path.join(casePath, inner.name);
+
+          let status = "pending";
+          try {
+            const patientInner = fs.readdirSync(patientPath, {
+              withFileTypes: true,
+            });
+            const hasUploadedFolder = patientInner.some(
+              (e) => e.isDirectory() && e.name.trim().toUpperCase() === "AAA-U"
+            );
+            if (hasUploadedFolder) status = "uploaded";
+          } catch {
+            // ignore patient-level read errors
           }
+
+          patients.push({
+            patientName: patientName.trim(),
+            status,
+          });
         }
       } catch {
-        // ignore read errors
+        // ignore case-level read errors
       }
 
       return {
-        name: entry.name,
-        path: casePath,
+        // name: entry.name,
+        // path: casePath,
         caseId,
         token,
         caseOwner,
-        patientNames,
-        priority: null,
-        type: "live",
+        patients, // list of patients with individual statuses
+        // priority: null,
+        // type: "live",
       };
     })
     .filter(Boolean);
@@ -119,26 +142,57 @@ export const getRedesignCases = (basePath: string) => {
       const casePath = path.join(basePath, entry.name);
       const uploadsPath = path.join(casePath, "TS_Uploads");
 
-      let patientName: string[] = [];
-      if (fs.existsSync(uploadsPath)) {
-        const uploadEntries = fs.readdirSync(uploadsPath, {
-          withFileTypes: true,
-        });
-        patientName = uploadEntries
-          .filter((e) => e.isDirectory())
-          .map((e) => e.name);
+      const patients: {
+        patientName: string;
+        status: string;
+      }[] = [];
+
+      try {
+        if (fs.existsSync(uploadsPath)) {
+          const uploadEntries = fs.readdirSync(uploadsPath, {
+            withFileTypes: true,
+          });
+
+          for (const upload of uploadEntries) {
+            if (!upload.isDirectory()) continue;
+
+            const patientName = upload.name;
+            const patientPath = path.join(uploadsPath, upload.name);
+
+            let status = "pending";
+            try {
+              const innerEntries = fs.readdirSync(patientPath, {
+                withFileTypes: true,
+              });
+              const hasUploadedFolder = innerEntries.some(
+                (e) =>
+                  e.isDirectory() && e.name.trim().toUpperCase() === "AAA-U"
+              );
+              if (hasUploadedFolder) status = "uploaded";
+            } catch {
+              // ignore patient-level read errors
+            }
+
+            patients.push({
+              patientName: patientName.trim(),
+              status,
+            });
+          }
+        }
+      } catch {
+        // ignore TS_Uploads-level read errors
       }
 
       return {
-        name: entry.name,
-        path: casePath,
+        // name: entry.name,
+        // path: casePath,
         caseId,
         token,
         attempt: Number(attempt),
         caseOwner,
-        priority,
-        type: "redesign",
-        patientName,
+        patients,
+        // priority: priority || null,
+        // type: "redesign",
       };
     })
     .filter(Boolean);

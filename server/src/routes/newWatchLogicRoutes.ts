@@ -1,14 +1,30 @@
 import { Router } from "express";
 import {
-  getCaseFolders,
-  getTokenFolders,
-  getDateFolders,
+  getAllCasesData,
 } from "../controllers/newWatchLogic.js";
 
 const router = Router();
 
-router.get("/cases/date", getDateFolders);
-router.get("/cases/tokens/:activeDate", getTokenFolders);
-router.post("/cases/case-data", getCaseFolders);
+router.get("/cases/details", getAllCasesData);
 
 export default router;
+
+
+
+
+
+
+
+
+
+
+
+// import { Router } from "express";
+// import { getAllDates, getCasesByDate } from "../controllers/newWatchLogic.js";
+
+// const router = Router();
+
+// router.get("/cases/dates", getAllDates);
+// router.get("/cases/details/:activeDate", getCasesByDate);
+
+// export default router;
