@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import LiveCaseTable from "./components/LiveCaseTable";
 import RedesignTable from "./components/RedesignTable";
 import type { LiveCaseItem, RedesignItem } from "./types/caseTypes";
@@ -12,29 +12,32 @@ const App: React.FC = () => {
   const [activeToken, setActiveToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await fetch("http://localhost:5000/api/cases/details");
-        const json: DateMap = await res.json();
-        setData(json);
+  // ✅ Move fetchData outside of useEffect and memoize with useCallback
+  const fetchData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch("http://localhost:5000/api/cases/details");
+      const json: DateMap = await res.json();
+      setData(json);
 
-        const allDates = Object.keys(json);
-        if (allDates.length > 0) {
-          const firstDate = allDates[0];
-          const tokens = Object.keys(json[firstDate] || {});
-          const firstToken = tokens.length > 0 ? tokens[0] : null;
-          setActiveDate(firstDate);
-          setActiveToken(firstToken);
-        }
-      } catch (err) {
-        console.error("Error fetching:", err);
-      } finally {
-        setIsLoading(false);
+      const allDates = Object.keys(json);
+      if (allDates.length > 0) {
+        const firstDate = allDates[0];
+        const tokens = Object.keys(json[firstDate] || {});
+        const firstToken = tokens.length > 0 ? tokens[0] : null;
+        setActiveDate((prev) => prev || firstDate);
+        setActiveToken((prev) => prev || firstToken);
       }
-    };
-    fetchData();
+    } catch (err) {
+      console.error("Error fetching:", err);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   if (isLoading)
     return <div className="p-4 animate-pulse">Loading cases...</div>;
@@ -105,6 +108,7 @@ const App: React.FC = () => {
             activeDate={activeDate}
             activeToken={activeToken}
             data={filteredCases as RedesignItem[]}
+            onRefresh={fetchData}
           />
         ) : (
           <LiveCaseTable
@@ -115,6 +119,7 @@ const App: React.FC = () => {
             }}
             activeDate={activeDate}
             activeToken={activeToken}
+            onRefresh={fetchData}
           />
         )}
       </div>

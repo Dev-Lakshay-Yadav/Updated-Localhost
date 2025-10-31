@@ -52,7 +52,6 @@ const REDESIGN_REGEX = /^RD-(\d+)-([A-Z]{2}\d{5})\s--\s(.+)-\s?(HIGH|MEDIUM)$/;
 
 // 🔹 LIVE CASES
 export const getLiveCases = (basePath: string) => {
-  console.log("Base Path:", basePath);
 
   if (!fs.existsSync(basePath)) {
     throw new Error(`Base path not found: ${basePath}`);
