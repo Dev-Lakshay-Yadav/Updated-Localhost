@@ -3,7 +3,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import watchLocalRoutes from "./routes/watchLocal.js";
 import uploadRoutes from "./routes/uploadFile.js";
-import newWatchLogicRoutesRoutes from "./routes/newWatchLogicRoutes.js";
 
 import { getClient } from "./config/box.js";
 import { processCases } from "./utils/downloader/ts_portal_box_cases_downloader.js";
@@ -35,7 +34,7 @@ setInterval(() => {
 }, 60 * 1000);
 
 // Then your routes
-app.use("/api", watchLocalRoutes, uploadRoutes, newWatchLogicRoutesRoutes);
+app.use("/api", watchLocalRoutes, uploadRoutes);
 
 // ------------------- Start Server -------------------
 app.listen(PORT, () => {

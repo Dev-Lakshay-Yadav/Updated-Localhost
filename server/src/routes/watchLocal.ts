@@ -1,8 +1,10 @@
 import { Router } from "express";
-import { getCaseFoldersController } from "../controllers/watchLocalFiles.js";
+import {
+  getAllCasesData,
+} from "../controllers/watchLocalFiles.js";
 
 const router = Router();
 
-router.get("/cases", getCaseFoldersController);
+router.get("/cases/details", getAllCasesData);
 
 export default router;
