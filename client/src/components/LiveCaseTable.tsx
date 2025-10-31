@@ -1,23 +1,5 @@
 import React, { useState } from "react";
-
-interface Patient {
-  patientName?: string;
-  status?: string;
-}
-
-interface LiveCaseItem {
-  caseId: string;
-  token: string;
-  caseOwner: string;
-  caseStatus?: string;
-  patients?: Patient[];
-}
-
-interface LiveCaseTableProps {
-  data: Record<string, Record<string, LiveCaseItem[]>>;
-  activeDate: string | null;
-  activeToken: string | null;
-}
+import type { LiveCaseTableProps } from "../types/caseTypes";
 
 const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
   data,
@@ -29,6 +11,7 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({}); // { "caseId-index": "uploaded" | "failed" }
 
   if (!activeDate || !activeToken)
     return (
@@ -60,6 +43,7 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
       patientName: string;
       caseOwner: string;
       activeDate: string;
+      key: string;
     }[] = [];
 
     filteredData.forEach((item) => {
@@ -71,24 +55,34 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
       patients.forEach((p, i) => {
         const key = `${item.caseId}-${i}`;
         if (selectedPatients.has(key)) {
+          const nameToSend =
+            !p.patientName || p.patientName === "Single Unit Case"
+              ? ""
+              : p.patientName;
+
           selectedData.push({
             caseId: item.caseId,
-            patientName: p.patientName || "Single Unit Case",
+            patientName: nameToSend,
             caseOwner: item.caseOwner,
             activeDate,
+            key,
           });
         }
       });
     });
 
-    if (selectedData.length === 0) return alert("No patients selected!");
+    if (selectedData.length === 0) {
+      console.log("⚠️ No patients selected!");
+      return;
+    }
 
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      // Send each selected record one by one
-      for (const item of selectedData) {
-        console.log("📤 Sending:", item);
+    for (const item of selectedData) {
+      try {
+        console.log("📤 Uploading:", item);
+        setUploadStatus((prev) => ({ ...prev, [item.key]: "uploading" }));
+
         const response = await fetch("http://localhost:5000/api/upload/live", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -96,22 +90,25 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
         });
 
         if (!response.ok) {
-          console.error(`❌ Failed for ${item.caseId}`, await response.text());
-        } else {
-          console.log(`✅ Uploaded ${item.caseId}`);
+          const errText = await response.text();
+          console.error(`❌ Failed for ${item.caseId}: ${errText}`);
+          setUploadStatus((prev) => ({ ...prev, [item.key]: "failed" }));
+          continue;
         }
-      }
 
-      alert("All selected data uploaded successfully!");
-    } catch (error) {
-      console.error("❌ Upload error:", error);
-      alert("Failed to upload data. Check console for details.");
-    } finally {
-      setLoading(false);
+        console.log(`✅ Uploaded ${item.caseId}`);
+        setUploadStatus((prev) => ({ ...prev, [item.key]: "uploaded" }));
+      } catch (error) {
+        console.error(`💥 Network error for ${item.caseId}:`, error);
+        setUploadStatus((prev) => ({ ...prev, [item.key]: "failed" }));
+      }
     }
+
+    setLoading(false);
+    console.log("✅ All selected uploads processed");
   };
 
-  // Determine visible patient keys
+  // Determine all visible rows
   const allKeys: string[] = [];
   filteredData.forEach((item) => {
     const patients =
@@ -136,9 +133,11 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
     }
   };
 
+  console.log(data, "asd");
+
   return (
     <div className="w-full p-6 overflow-auto">
-      {/* Header Row */}
+      {/* Header */}
       <div className="flex justify-between items-center mb-4">
         {/* Search Bar */}
         <div className="flex items-center gap-2">
@@ -202,6 +201,11 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
                 return patients.map((patient, patientIndex) => {
                   const key = `${item.caseId}-${patientIndex}`;
                   const isChecked = selectedPatients.has(key);
+                  const status =
+                    uploadStatus[key] ||
+                    patient.status ||
+                    item.caseStatus ||
+                    "-";
 
                   return (
                     <tr
@@ -237,14 +241,19 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
                       <td className="px-4 py-2 border">
                         {patient.patientName || "Single Unit Case"}
                       </td>
+
                       <td
                         className={`px-4 py-2 border ${
-                          patient.status === "uploaded"
+                          status === "uploaded"
                             ? "text-green-600 font-semibold"
+                            : status === "uploading"
+                            ? "text-blue-600 italic"
+                            : status === "failed"
+                            ? "text-red-600 font-semibold"
                             : "text-gray-700"
                         }`}
                       >
-                        {patient.status || item.caseStatus || "-"}
+                        {status}
                       </td>
 
                       <td className="px-4 py-2 border">
@@ -254,6 +263,7 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
                           onChange={() =>
                             togglePatientSelection(item.caseId, patientIndex)
                           }
+                          disabled={loading}
                         />
                       </td>
                     </tr>

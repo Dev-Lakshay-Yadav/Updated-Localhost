@@ -1,27 +1,7 @@
 import React, { useEffect, useState } from "react";
 import LiveCaseTable from "./components/LiveCaseTable";
 import RedesignTable from "./components/RedesignTable";
-
-interface Patient {
-  patientName?: string;
-  status?: string;
-}
-
-interface LiveCaseItem {
-  caseId: string;
-  token: string;
-  caseOwner: string;
-  caseStatus?: string;
-  patients?: Patient[];
-}
-
-interface RedesignItem {
-  caseId: string;
-  attempt: number;
-  caseOwner: string;
-  patients?: Patient[];
-  priority: string;
-}
+import type { LiveCaseItem, RedesignItem } from "./types/caseTypes";
 
 type CaseItem = LiveCaseItem | RedesignItem;
 type DateMap = Record<string, Record<string, CaseItem[]>>;

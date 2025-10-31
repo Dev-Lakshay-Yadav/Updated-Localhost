@@ -1,12 +1,12 @@
 import express from "express";
 import {
-  uploadNormalCase,
-  uploadRedesigns,
+  uploadLiveCases,
+  uploadRedesignCases,
 } from "../controllers/uploadToBox.js";
 
 const router = express.Router();
 
-router.post("/upload/live", uploadNormalCase);
-router.post("/upload/redesign", uploadRedesigns);
+router.post("/upload/live", uploadLiveCases);
+router.post("/upload/redesign", uploadRedesignCases);
 
 export default router;

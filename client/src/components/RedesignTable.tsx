@@ -1,23 +1,5 @@
 import React, { useState } from "react";
-
-interface Patient {
-  patientName?: string;
-  status?: string;
-}
-
-interface RedesignItem {
-  caseId: string;
-  attempt: number;
-  caseOwner: string;
-  patients?: Patient[];
-  priority: string;
-}
-
-interface RedesignCaseTableProps {
-  data: RedesignItem[];
-  activeDate: string | null;
-  activeToken: string | null;
-}
+import type { RedesignCaseTableProps } from "../types/caseTypes";
 
 const RedesignTable: React.FC<RedesignCaseTableProps> = ({
   data,
@@ -29,6 +11,7 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({});
 
   if (!activeDate || !activeToken)
     return (
@@ -65,7 +48,8 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       caseOwner: string;
       attempt: number;
       activeDate: string;
-      priority: string; // ✅ Added priority
+      priority: string;
+      key: string;
     }[] = [];
 
     filteredData.forEach((item) => {
@@ -83,19 +67,29 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
             caseOwner: item.caseOwner,
             attempt: item.attempt,
             activeDate,
-            priority: item.priority, // ✅ Include priority in request
+            priority: item.priority,
+            key,
           });
         }
       });
     });
 
-    if (selectedData.length === 0) return alert("No patients selected!");
+    if (selectedData.length === 0) {
+      setUploadStatus((prev) => ({
+        ...prev,
+        global: "⚠️ No patients selected for upload.",
+      }));
+      return;
+    }
 
-    try {
-      setLoading(true);
+    setLoading(true);
+    setUploadStatus({});
 
-      for (const item of selectedData) {
-        console.log("📤 Sending:", item);
+    for (const item of selectedData) {
+      try {
+        // Mark as "uploading"
+        setUploadStatus((prev) => ({ ...prev, [item.key]: "uploading" }));
+
         const response = await fetch(
           "http://localhost:5000/api/upload/redesign",
           {
@@ -106,19 +100,21 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
         );
 
         if (!response.ok) {
-          console.error(`❌ Failed for ${item.caseId}`, await response.text());
+          const errorText = await response.text();
+          console.error(`❌ Failed for ${item.caseId}:`, errorText);
+          setUploadStatus((prev) => ({ ...prev, [item.key]: "failed" }));
         } else {
-          console.log(`✅ Uploaded ${item.caseId}`);
+          const resJson = await response.json();
+          console.log(`✅ Uploaded ${item.caseId}`, resJson);
+          setUploadStatus((prev) => ({ ...prev, [item.key]: "uploaded" }));
         }
+      } catch (error) {
+        console.error("❌ Upload error:", error);
+        setUploadStatus((prev) => ({ ...prev, [item.key]: "failed" }));
       }
-
-      alert("All selected data uploaded successfully!");
-    } catch (error) {
-      console.error("❌ Upload error:", error);
-      alert("Failed to upload data. Check console for details.");
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   };
 
   // Collect all patient keys
@@ -178,6 +174,13 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
         </button>
       </div>
 
+      {/* Upload Info */}
+      {uploadStatus.global && (
+        <div className="text-center text-sm text-gray-700 mb-2">
+          {uploadStatus.global}
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="min-w-full border border-gray-300">
@@ -211,11 +214,18 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
                 return patients.map((patient, patientIndex) => {
                   const key = `${item.caseId}-${item.attempt}-${patientIndex}`;
                   const isChecked = selectedPatients.has(key);
+                  const status = uploadStatus[key] || patient.status || "-";
 
                   return (
                     <tr
                       key={key}
-                      className="text-center border-t hover:bg-gray-50"
+                      className={`text-center border-t ${
+                        status === "uploaded"
+                          ? "bg-green-50"
+                          : status === "failed"
+                          ? "bg-red-50"
+                          : ""
+                      } hover:bg-gray-50`}
                     >
                       {patientIndex === 0 && (
                         <>
@@ -225,28 +235,24 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
                           >
                             {caseIndex + 1}
                           </td>
-
                           <td
                             rowSpan={patients.length}
                             className="px-4 py-2 border align-middle"
                           >
                             {item.caseId}
                           </td>
-
                           <td
                             rowSpan={patients.length}
                             className="px-4 py-2 border align-middle"
                           >
                             {item.attempt}
                           </td>
-
                           <td
                             rowSpan={patients.length}
                             className="px-4 py-2 border align-middle"
                           >
                             {item.caseOwner}
                           </td>
-
                           <td
                             rowSpan={patients.length}
                             className="px-4 py-2 border align-middle text-blue-600 font-medium"
@@ -261,13 +267,17 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
                       </td>
 
                       <td
-                        className={`px-4 py-2 border ${
-                          patient.status === "uploaded"
-                            ? "text-green-600 font-semibold"
+                        className={`px-4 py-2 border font-medium ${
+                          status === "uploaded"
+                            ? "text-green-600"
+                            : status === "failed"
+                            ? "text-red-600"
+                            : status === "uploading"
+                            ? "text-yellow-600"
                             : "text-gray-700"
                         }`}
                       >
-                        {patient.status || "-"}
+                        {status}
                       </td>
 
                       <td className="px-4 py-2 border">
@@ -281,6 +291,7 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
                               patientIndex
                             )
                           }
+                          disabled={loading}
                         />
                       </td>
                     </tr>

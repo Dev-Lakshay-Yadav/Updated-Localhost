@@ -52,6 +52,8 @@ const REDESIGN_REGEX = /^RD-(\d+)-([A-Z]{2}\d{5})\s--\s(.+)-\s?(HIGH|MEDIUM)$/;
 
 // 🔹 LIVE CASES
 export const getLiveCases = (basePath: string) => {
+  console.log("Base Path:", basePath);
+
   if (!fs.existsSync(basePath)) {
     throw new Error(`Base path not found: ${basePath}`);
   }
@@ -67,32 +69,26 @@ export const getLiveCases = (basePath: string) => {
       const [, caseId, caseOwner] = match;
       const casePath = path.join(basePath, entry.name);
 
-      const patients: {
-        patientName: string;
-        status: string;
-      }[] = [];
-
-      let caseStatus = "pending"; // default case-level status
+      let caseStatus = "pending";
+      const patients: { patientName: string; status: string }[] = [];
 
       try {
-        const innerEntries = fs.readdirSync(casePath, { withFileTypes: true });
+        // ✅ Check if case folder directly contains "AAA -- U"
+        const hasUploadedFolder = fs
+          .readdirSync(casePath, { withFileTypes: true })
+          .some(
+            (e) => e.isDirectory() && e.name.trim().toUpperCase() === "AAA -- U"
+          );
 
-        // collect patient folders
-        const patientDirs = innerEntries.filter((inner) => inner.isDirectory());
-
-        if (patientDirs.length === 0) {
-          // no patient folders → caseStatus only
-          try {
-            const hasUploadedFolder = innerEntries.some(
-              (e) =>
-                e.isDirectory() && e.name.trim().toUpperCase() === "AAA -- U"
-            );
-            if (hasUploadedFolder) caseStatus = "uploaded";
-          } catch {
-            // ignore missing subfolder errors
-          }
+        if (hasUploadedFolder) {
+          caseStatus = "uploaded";
         } else {
-          // handle patient folders individually
+          // Otherwise, check if it contains patient subfolders
+          const innerEntries = fs.readdirSync(casePath, {
+            withFileTypes: true,
+          });
+          const patientDirs = innerEntries.filter((e) => e.isDirectory());
+
           for (const inner of patientDirs) {
             const innerMatch = inner.name.match(LIVE_REGEX);
             if (!innerMatch) continue;
@@ -101,17 +97,19 @@ export const getLiveCases = (basePath: string) => {
             const patientPath = path.join(casePath, inner.name);
 
             let status = "pending";
+
             try {
-              const patientInner = fs.readdirSync(patientPath, {
-                withFileTypes: true,
-              });
-              const hasUploadedFolder = patientInner.some(
-                (e) =>
-                  e.isDirectory() && e.name.trim().toUpperCase() === "AAA -- U"
-              );
-              if (hasUploadedFolder) status = "uploaded";
+              const hasUploadedFolderInPatient = fs
+                .readdirSync(patientPath, { withFileTypes: true })
+                .some(
+                  (e) =>
+                    e.isDirectory() &&
+                    e.name.trim().toUpperCase() === "AAA -- U"
+                );
+
+              if (hasUploadedFolderInPatient) status = "uploaded";
             } catch {
-              // ignore patient-level read errors
+              // ignore read errors
             }
 
             patients.push({
@@ -120,20 +118,20 @@ export const getLiveCases = (basePath: string) => {
             });
           }
 
-          // infer caseStatus from patients
+          // Infer case status from patients if any uploaded
           if (patients.some((p) => p.status === "uploaded")) {
             caseStatus = "uploaded";
           }
         }
-      } catch {
-        // ignore case-level read errors
+      } catch (err) {
+        console.error("Error reading case folder:", entry.name, err);
       }
 
       return {
         caseId,
         caseOwner,
-        patients, // array may be empty
-        caseStatus, // always present
+        caseStatus,
+        patients, // may be empty
       };
     })
     .filter(Boolean);
