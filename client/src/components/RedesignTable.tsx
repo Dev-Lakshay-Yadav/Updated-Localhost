@@ -1,14 +1,17 @@
 import React, { useState } from "react";
 import type {
   RedesignCaseTableProps,
+  RedesignSeletedItem,
   UploadResponse,
 } from "../types/caseTypes";
+import RedesignTableView from "./RedesignTableView";
 
 const RedesignTable: React.FC<RedesignCaseTableProps> = ({
   data,
   activeDate,
   activeToken,
   onRefresh,
+  passwords, // array of valid passkeys
 }) => {
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(
     new Set()
@@ -16,6 +19,9 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({});
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [enteredPasskey, setEnteredPasskey] = useState("");
+  const [passkeyError, setPasskeyError] = useState("");
 
   if (!activeDate || !activeToken)
     return (
@@ -24,10 +30,8 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       </div>
     );
 
-  const tableData = data || [];
-  const searchString = searchQuery.toLowerCase();
-  const filteredData = tableData.filter((item) =>
-    item.caseId.toLowerCase().includes(searchString)
+  const filteredData = (data || []).filter((item) =>
+    item.caseId.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const togglePatientSelection = (
@@ -44,18 +48,43 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
     });
   };
 
-  const handleSubmit = async () => {
-    const selectedData: {
-      caseId: string;
-      patientName: string;
-      caseOwner: string;
-      attempt: number;
-      activeDate: string;
-      priority: string;
-      key: string;
-    }[] = [];
+  // Show modal before upload
+  const handleUploadClick = () => {
+    if (selectedPatients.size === 0) {
+      setUploadStatus((prev) => ({
+        ...prev,
+        global: "⚠️ No patients selected.",
+      }));
+      return;
+    }
+    setShowConfirmModal(true);
+    setPasskeyError("");
+    setEnteredPasskey("");
+  };
 
-    // 🟢 Step 1: Build selected data list
+  const handleConfirmUpload = async () => {
+    if (!enteredPasskey.trim()) {
+      setPasskeyError("Please enter your passkey.");
+      return;
+    }
+
+    const valid = passwords.some(
+      (p) => p.trim().toLowerCase() === enteredPasskey.trim().toLowerCase()
+    );
+
+    if (!valid) {
+      setPasskeyError("❌ Invalid passkey. Please try again.");
+      return;
+    }
+
+    setShowConfirmModal(false);
+    setPasskeyError("");
+    await handleSubmit();
+  };
+
+  const handleSubmit = async () => {
+    const selectedData: RedesignSeletedItem[] = [];
+
     filteredData.forEach((item) => {
       const patients =
         item.patients && item.patients.length > 0
@@ -68,9 +97,7 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
           selectedData.push({
             caseId: item.caseId,
             patientName:
-              !p.patientName || p.patientName === "Single Unit Case"
-                ? ""
-                : p.patientName,
+              p.patientName === "Single Unit Case" ? "" : p.patientName || "",
             caseOwner: item.caseOwner,
             attempt: item.attempt,
             activeDate,
@@ -81,42 +108,36 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       });
     });
 
-    // 🟡 Step 2: Validate selection
     if (selectedData.length === 0) {
       setUploadStatus((prev) => ({
         ...prev,
-        global: "⚠️ No patients selected for upload.",
+        global: "⚠️ No patients selected.",
       }));
       return;
     }
 
-    // 🟣 Step 3: Prepare upload state
     setLoading(true);
     setUploadStatus(
       Object.fromEntries(selectedData.map((d) => [d.key, "uploading"]))
     );
 
     try {
-      // 🟢 Step 4: Send upload request
-      const response = await fetch(
-        "http://localhost:5000/api/upload/redesign",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cases: selectedData }),
-        }
-      );
+      const res = await fetch("http://localhost:5000/api/upload/redesign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cases: selectedData,
+          passkey: enteredPasskey.trim(),
+        }),
+      });
 
-      const result: UploadResponse = await response.json();
+      const result: UploadResponse = await res.json();
 
-      // 🔴 Step 5: Handle server errors
-      if (!response.ok) {
-        console.error("❌ Bulk upload failed:", result);
+      if (!res.ok) {
         selectedData.forEach((d) =>
           setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
         );
       } else {
-        // 🟢 Step 6: Apply upload results
         result.results.forEach((r) => {
           const match = selectedData.find(
             (d) => d.caseId === r.caseId && d.patientName === r.patientName
@@ -128,20 +149,12 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
             }));
           }
         });
-
-        // 🟢 Step 7: Auto refresh if all succeeded
-        const allUploaded = result.results.every(
-          (r) => r.status === "uploaded"
-        );
-        if (allUploaded && typeof onRefresh === "function") {
-          setTimeout(() => {
-            onRefresh();
-          }, 800);
+        if (result.results.every((r) => r.status === "uploaded")) {
+          setTimeout(() => onRefresh?.(), 800);
         }
       }
-    } catch (error) {
-      // 🛑 Step 8: Network or unexpected error
-      console.error("💥 Bulk upload network error:", error);
+    } catch (err) {
+      console.error("💥 Upload error:", err);
       selectedData.forEach((d) =>
         setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
       );
@@ -150,229 +163,89 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
     }
   };
 
-  // Get all case keys and filter out already uploaded ones
-  const allKeys: string[] = [];
+  // Compute select-all state
   const eligibleKeys: string[] = [];
-
   filteredData.forEach((item) => {
     const patients =
       item.patients && item.patients.length > 0
         ? item.patients
         : [{ patientName: "Single Unit Case", status: "-" }];
-
     patients.forEach((p, i) => {
       const key = `${item.caseId}-${item.attempt}-${i}`;
-      allKeys.push(key);
-      if (p.status !== "uploaded" && uploadStatus[key] !== "uploaded") {
+      if (p.status !== "uploaded" && uploadStatus[key] !== "uploaded")
         eligibleKeys.push(key);
-      }
     });
   });
 
-  const allSelected =
-    eligibleKeys.length > 0 &&
-    eligibleKeys.every((k) => selectedPatients.has(k));
-
+  const allSelected = eligibleKeys.every((k) => selectedPatients.has(k));
   const toggleSelectAll = () => {
     const updated = new Set(selectedPatients);
-    if (allSelected) {
-      // Unselect only eligible ones
-      eligibleKeys.forEach((k) => updated.delete(k));
-    } else {
-      // Add only eligible (non-uploaded) keys
-      eligibleKeys.forEach((k) => updated.add(k));
-    }
+    if (allSelected) eligibleKeys.forEach((k) => updated.delete(k));
+    else eligibleKeys.forEach((k) => updated.add(k));
     setSelectedPatients(updated);
   };
 
   return (
-    <div className="w-full p-6 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-      {/* Header Section */}
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <span className="text-xl font-semibold text-blue-700 tracking-tight">
-            {activeToken}
-          </span>
-          <input
-            type="text"
-            placeholder="🔍 Search Case ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="border border-gray-300 rounded-xl px-4 py-2 w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 hover:bg-white transition"
-          />
-        </div>
+    <>
+      <RedesignTableView
+        activeToken={activeToken}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        allSelected={allSelected}
+        toggleSelectAll={toggleSelectAll}
+        filteredData={filteredData}
+        selectedPatients={selectedPatients}
+        togglePatientSelection={togglePatientSelection}
+        uploadStatus={uploadStatus}
+        loading={loading}
+        // Replace direct submit with modal trigger
+        handleSubmit={handleUploadClick}
+        globalMessage={uploadStatus.global}
+      />
 
-        <button
-          onClick={handleSubmit}
-          disabled={selectedPatients.size === 0 || loading}
-          className={`px-6 py-2.5 rounded-xl font-semibold text-white shadow-md transition-all duration-150 ${
-            selectedPatients.size > 0 && !loading
-              ? "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 active:scale-95"
-              : "bg-gray-300 cursor-not-allowed"
-          }`}
-        >
-          {loading ? "Uploading..." : "Upload Selected"}
-        </button>
-      </div>
+      {/* Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-transparent flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-96 text-center relative">
+            <h2 className="text-xl font-semibold text-gray-800 mb-3">
+              Confirm Upload
+            </h2>
+            <p className="text-gray-600 mb-4">
+              Enter your{" "}
+              <span className="font-semibold text-blue-600">passkey</span> to
+              continue.
+            </p>
 
-      {uploadStatus.global && (
-        <div className="text-center text-md text-gray-600 mb-4 font-medium">
-          {uploadStatus.global}
+            <input
+              type="password"
+              placeholder="Enter passkey..."
+              value={enteredPasskey}
+              onChange={(e) => setEnteredPasskey(e.target.value)}
+              className="border border-gray-300 rounded-xl px-4 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+
+            {passkeyError && (
+              <div className="text-red-500 text-sm mt-2">{passkeyError}</div>
+            )}
+
+            <div className="flex justify-between mt-6">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmUpload}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
-
-      {/* Modern Table */}
-      <div className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-        <table className="min-w-full text-md text-gray-700">
-          <thead className="bg-gradient-to-r from-blue-50 to-blue-100 border-b border-gray-200">
-            <tr>
-              {[
-                "S.No.",
-                "Case ID",
-                "Attempt",
-                "Case Owner",
-                "Priority",
-                "Patient Name",
-                "Status",
-                "Select",
-              ].map((header) => (
-                <th
-                  key={header}
-                  className="px-4 py-3 font-semibold text-gray-700 text-center"
-                >
-                  {header === "Select" ? (
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                  ) : (
-                    header
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
-
-          <tbody className="divide-y divide-gray-100">
-            {filteredData.length > 0 ? (
-              filteredData.map((item, caseIndex) => {
-                const patients =
-                  item.patients && item.patients.length > 0
-                    ? item.patients
-                    : [{ patientName: "Single Unit Case", status: "-" }];
-
-                return patients.map((patient, patientIndex) => {
-                  const key = `${item.caseId}-${item.attempt}-${patientIndex}`;
-                  const isChecked = selectedPatients.has(key);
-                  const status = uploadStatus[key] || patient.status || "-";
-
-                  return (
-                    <tr
-                      key={key}
-                      className={`transition-colors hover:bg-blue-50 ${
-                        status === "uploaded"
-                          ? "bg-green-50"
-                          : status === "failed"
-                          ? "bg-red-50"
-                          : ""
-                      }`}
-                    >
-                      {patientIndex === 0 && (
-                        <>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center font-semibold text-gray-800"
-                          >
-                            {caseIndex + 1}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center text-gray-700 font-medium"
-                          >
-                            {item.caseId}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center text-gray-500"
-                          >
-                            {item.attempt}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center text-gray-700"
-                          >
-                            {item.caseOwner}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className={`px-4 py-3 text-center font-semibold ${
-                              item.priority === "High"
-                                ? "text-red-600"
-                                : "text-blue-600"
-                            }`}
-                          >
-                            {item.priority}
-                          </td>
-                        </>
-                      )}
-
-                      <td className="px-4 py-3 text-center">
-                        {patient.patientName || "Single Unit Case"}
-                      </td>
-
-                      <td
-                        className={`px-4 py-3 text-center font-semibold ${
-                          status === "uploaded"
-                            ? "text-green-600"
-                            : status === "failed"
-                            ? "text-red-600"
-                            : status === "uploading"
-                            ? "text-orange-400"
-                            : "text-gray-600"
-                        }`}
-                      >
-                        {status}
-                      </td>
-
-                      <td className="px-4 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() =>
-                            togglePatientSelection(
-                              item.caseId,
-                              item.attempt,
-                              patientIndex
-                            )
-                          }
-                          disabled={loading || status === "uploaded"}
-                          className={`w-4 h-4 accent-blue-600 ${
-                            status === "uploaded"
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                        />
-                      </td>
-                    </tr>
-                  );
-                });
-              })
-            ) : (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="text-center py-6 text-gray-400 italic"
-                >
-                  No cases found
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </>
   );
 };
 

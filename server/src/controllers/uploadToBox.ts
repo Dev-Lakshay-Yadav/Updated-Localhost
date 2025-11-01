@@ -8,7 +8,7 @@ const ROOT_DIR = process.env.ROOT_FOLDER || "";
 
 export const uploadLiveCases = async (req: Request, res: Response) => {
   try {
-    const cases = req.body.cases;
+    const { cases, passkey } = req.body;
 
     if (!Array.isArray(cases) || cases.length === 0) {
       return res.status(400).json({
@@ -77,7 +77,7 @@ export const uploadLiveCases = async (req: Request, res: Response) => {
         }
 
         // --- Upload files to Box ---
-        const summary = await handleBoxUpload(
+        const uploadResult = await handleBoxUpload(
           caseId,
           userToken,
           patientFolderName,
@@ -85,6 +85,11 @@ export const uploadLiveCases = async (req: Request, res: Response) => {
           files
         );
 
+        const summary = {
+          ...uploadResult,
+          type: "Live Case",
+          passkey: passkey,
+        };
         // --- Mark upload completion ---
         try {
           const newFolderPath = path.join(folderPath, "AAA -- U");
@@ -113,7 +118,7 @@ export const uploadLiveCases = async (req: Request, res: Response) => {
           caseId,
           patientName,
           status: "uploaded",
-          summary,
+          uploadResult,
         });
       } catch (err: any) {
         console.error(`💥 Error uploading ${caseId}:`, err.message);
@@ -144,7 +149,7 @@ export const uploadLiveCases = async (req: Request, res: Response) => {
 
 export const uploadRedesignCases = async (req: Request, res: Response) => {
   try {
-    const { cases } = req.body;
+    const { cases, passkey } = req.body;
 
     if (!Array.isArray(cases) || cases.length === 0) {
       return res.status(400).json({
@@ -175,7 +180,14 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
       } = c;
 
       // --- Validate input ---
-      if (!caseId || !activeDate || !caseOwner || !patientName || !attempt || !priority) {
+      if (
+        !caseId ||
+        !activeDate ||
+        !caseOwner ||
+        !patientName ||
+        !attempt ||
+        !priority
+      ) {
         results.push({
           key,
           caseId,
@@ -230,13 +242,19 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
         }
 
         // --- Upload files to Box ---
-        const summary = await handleBoxUpload(
+        const uploadResult = await handleBoxUpload(
           caseId,
           userToken,
           patientFolderName,
           caseFolderId,
           allFiles
         );
+
+        const summary = {
+          ...uploadResult,
+          type: `Redesign-${attempt}`,
+          passkey: passkey,
+        };
 
         // --- Mark upload completion ---
         try {
@@ -267,7 +285,7 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
           caseId,
           patientName,
           status: "uploaded",
-          summary,
+          uploadResult,
         });
       } catch (err: any) {
         console.error(`💥 Error uploading ${caseId}:`, err.message);

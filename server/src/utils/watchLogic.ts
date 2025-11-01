@@ -74,7 +74,7 @@ export const getLiveCases = (basePath: string) => {
       const patients: { patientName: string; status: string }[] = [];
 
       try {
-        // ✅ Check if case folder directly contains "AAA -- U"
+        // Check if case folder directly contains "AAA -- U"
         const hasUploadedFolder = fs
           .readdirSync(casePath, { withFileTypes: true })
           .some(

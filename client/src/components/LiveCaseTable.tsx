@@ -1,11 +1,13 @@
 import React, { useState } from "react";
-import type { LiveCaseTableProps,UploadResponse } from "../types/caseTypes";
+import type { LiveCaseTableProps, UploadResponse } from "../types/caseTypes";
+import CaseTableView from "./CaseTableView";
 
 const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
   data,
   activeDate,
   activeToken,
   onRefresh,
+  passwords, // array of valid passkeys
 }) => {
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(
     new Set()
@@ -13,6 +15,9 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({});
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [enteredPasskey, setEnteredPasskey] = useState("");
+  const [passkeyError, setPasskeyError] = useState("");
 
   if (!activeDate || !activeToken)
     return (
@@ -37,6 +42,40 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
     });
   };
 
+  // Show modal before upload
+  const handleUploadClick = () => {
+    if (selectedPatients.size === 0) {
+      setUploadStatus((prev) => ({
+        ...prev,
+        global: "⚠️ No patients selected for upload.",
+      }));
+      return;
+    }
+    setShowConfirmModal(true);
+    setPasskeyError("");
+    setEnteredPasskey("");
+  };
+
+  const handleConfirmUpload = async () => {
+    if (!enteredPasskey.trim()) {
+      setPasskeyError("Please enter your passkey.");
+      return;
+    }
+
+    const valid = passwords.some(
+      (p) => p.trim().toLowerCase() === enteredPasskey.trim().toLowerCase()
+    );
+
+    if (!valid) {
+      setPasskeyError("❌ Invalid passkey. Please try again.");
+      return;
+    }
+
+    setShowConfirmModal(false);
+    setPasskeyError("");
+    await handleSubmit();
+  };
+
   const handleSubmit = async () => {
     const selectedData: {
       caseId: string;
@@ -50,15 +89,14 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
       const patients = item.patients?.length
         ? item.patients
         : [{ patientName: "Single Unit Case" }];
+
       patients.forEach((p, i) => {
         const key = `${item.caseId}-${i}`;
         if (selectedPatients.has(key)) {
           selectedData.push({
             caseId: item.caseId,
             patientName:
-              !p.patientName || p.patientName === "Single Unit Case"
-                ? ""
-                : p.patientName,
+              p.patientName === "Single Unit Case" ? "" : p.patientName || "",
             caseOwner: item.caseOwner,
             activeDate,
             key,
@@ -67,77 +105,55 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
       });
     });
 
-    if (selectedData.length === 0) {
-      setUploadStatus((prev) => ({
-        ...prev,
-        global: "⚠️ No patients selected for upload.",
-      }));
-      return;
-    }
-
     setLoading(true);
-    setUploadStatus({});
+    setUploadStatus(
+      Object.fromEntries(selectedData.map((d) => [d.key, "uploading"]))
+    );
 
     try {
-  setLoading(true);
-  setUploadStatus(
-    Object.fromEntries(selectedData.map((d) => [d.key, "uploading"]))
-  );
+      const response = await fetch("http://localhost:5000/api/upload/live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cases: selectedData,
+          passkey: enteredPasskey.trim(), // send the validated passkey
+        }),
+      });
 
-  const response = await fetch("http://localhost:5000/api/upload/live", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cases: selectedData }),
-  });
+      const result: UploadResponse = await response.json();
+      if (!response.ok) throw new Error("Upload failed");
 
-  const result: UploadResponse = await response.json();
+      result.results.forEach((r) => {
+        const match = selectedData.find(
+          (d) => d.caseId === r.caseId && d.patientName === r.patientName
+        );
+        if (match) {
+          setUploadStatus((prev) => ({
+            ...prev,
+            [match.key]: r.status === "uploaded" ? "uploaded" : "failed",
+          }));
+        }
+      });
 
-  if (!response.ok) {
-    console.error("❌ Bulk upload failed:", result);
-    selectedData.forEach((d) =>
-      setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
-    );
-  } else {
-    result.results.forEach((r) => {
-      const match = selectedData.find(
-        (d) => d.caseId === r.caseId && d.patientName === r.patientName
+      const allUploaded = result.results.every((r) => r.status === "uploaded");
+      if (allUploaded && onRefresh) setTimeout(() => onRefresh(), 800);
+    } catch (error) {
+      console.error("💥 Bulk upload network error:", error);
+      selectedData.forEach((d) =>
+        setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
       );
-      if (match) {
-        setUploadStatus((prev) => ({
-          ...prev,
-          [match.key]: r.status === "uploaded" ? "uploaded" : "failed",
-        }));
-      }
-    });
-
-    const allUploaded = result.results.every((r) => r.status === "uploaded");
-    if (allUploaded && typeof onRefresh === "function") {
-      setTimeout(() => {
-        onRefresh();
-      }, 800);
+    } finally {
+      setLoading(false);
     }
-  }
-} catch (error) {
-  console.error("💥 Bulk upload network error:", error);
-  selectedData.forEach((d) =>
-    setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
-  );
-} finally {
-  setLoading(false);
-}
-
-    setLoading(false);
   };
 
-  // Selection logic (same as RedesignTable)
+  // Selection logic
   const allKeys: string[] = [];
   const eligibleKeys: string[] = [];
-
   filteredData.forEach((item) => {
     const patients = item.patients?.length
       ? item.patients
       : [{ patientName: "Single Unit Case", status: item.caseStatus || "-" }];
-
     patients.forEach((p, i) => {
       const key = `${item.caseId}-${i}`;
       allKeys.push(key);
@@ -146,7 +162,6 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
       }
     });
   });
-
   const allSelected =
     eligibleKeys.length > 0 &&
     eligibleKeys.every((k) => selectedPatients.has(k));
@@ -176,7 +191,7 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
         </div>
 
         <button
-          onClick={handleSubmit}
+          onClick={handleUploadClick}
           disabled={selectedPatients.size === 0 || loading}
           className={`px-6 py-2.5 rounded-xl font-semibold text-white shadow-md transition-all duration-150 ${
             selectedPatients.size > 0 && !loading
@@ -194,143 +209,58 @@ const LiveCaseTable: React.FC<LiveCaseTableProps> = ({
         </div>
       )}
 
-      {/* Modern Table */}
-      <div className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-        <table className="min-w-full text-sm text-gray-700">
-          <thead className="bg-gradient-to-r from-blue-50 to-blue-100 border-b border-gray-200">
-            <tr>
-              {[
-                "S.No.",
-                "Case ID",
-                "Case Owner",
-                "Patient Name",
-                "Status",
-                "Select",
-              ].map((header) => (
-                <th
-                  key={header}
-                  className="px-4 py-3 font-semibold text-gray-700 text-center"
-                >
-                  {header === "Select" ? (
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                  ) : (
-                    header
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
+      <CaseTableView
+        filteredData={filteredData}
+        uploadStatus={uploadStatus}
+        selectedPatients={selectedPatients}
+        togglePatientSelection={togglePatientSelection}
+        allSelected={allSelected}
+        toggleSelectAll={toggleSelectAll}
+        loading={loading}
+      />
 
-          <tbody className="divide-y divide-gray-100">
-            {filteredData.length > 0 ? (
-              filteredData.map((item, caseIndex) => {
-                const patients = item.patients?.length
-                  ? item.patients
-                  : [
-                      {
-                        patientName: "Single Unit Case",
-                        status: item.caseStatus || "-",
-                      },
-                    ];
+      {/* Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-trnasparent flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-96 text-center relative">
+            <h2 className="text-xl font-semibold text-gray-800 mb-3">
+              Confirm Upload
+            </h2>
+            <p className="text-gray-600 mb-4">
+              Enter your{" "}
+              <span className="font-semibold text-blue-600">passkey</span> to
+              continue.
+            </p>
 
-                return patients.map((patient, patientIndex) => {
-                  const key = `${item.caseId}-${patientIndex}`;
-                  const isChecked = selectedPatients.has(key);
-                  const status =
-                    uploadStatus[key] ||
-                    patient.status ||
-                    item.caseStatus ||
-                    "-";
+            <input
+              type="password"
+              placeholder="Enter passkey..."
+              value={enteredPasskey}
+              onChange={(e) => setEnteredPasskey(e.target.value)}
+              className="border border-gray-300 rounded-xl px-4 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
 
-                  return (
-                    <tr
-                      key={key}
-                      className={`transition-colors hover:bg-blue-50 ${
-                        status === "uploaded"
-                          ? "bg-green-50"
-                          : status === "failed"
-                          ? "bg-red-50"
-                          : ""
-                      }`}
-                    >
-                      {patientIndex === 0 && (
-                        <>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center font-semibold text-gray-800"
-                          >
-                            {caseIndex + 1}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center text-gray-700 font-medium"
-                          >
-                            {item.caseId}
-                          </td>
-                          <td
-                            rowSpan={patients.length}
-                            className="px-4 py-3 text-center text-gray-700"
-                          >
-                            {item.caseOwner}
-                          </td>
-                        </>
-                      )}
-
-                      <td className="px-4 py-3 text-center">
-                        {patient.patientName || "Single Unit Case"}
-                      </td>
-
-                      <td
-                        className={`px-4 py-3 text-center font-semibold ${
-                          status === "uploaded"
-                            ? "text-green-600"
-                            : status === "failed"
-                            ? "text-red-600"
-                            : status === "uploading"
-                            ? "text-yellow-600"
-                            : "text-gray-600"
-                        }`}
-                      >
-                        {status}
-                      </td>
-
-                      <td className="px-4 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() =>
-                            togglePatientSelection(item.caseId, patientIndex)
-                          }
-                          disabled={loading || status === "uploaded"}
-                          className={`w-4 h-4 accent-blue-600 ${
-                            status === "uploaded"
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                        />
-                      </td>
-                    </tr>
-                  );
-                });
-              })
-            ) : (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="text-center py-6 text-gray-400 italic"
-                >
-                  No cases found
-                </td>
-              </tr>
+            {passkeyError && (
+              <div className="text-red-500 text-sm mt-2">{passkeyError}</div>
             )}
-          </tbody>
-        </table>
-      </div>
+
+            <div className="flex justify-between mt-6">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmUpload}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

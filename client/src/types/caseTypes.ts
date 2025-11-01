@@ -1,3 +1,10 @@
+export interface PasskeyItem {
+  id: number;
+  emp_name: string;
+  password: string;
+  role: string;
+}
+
 export interface Patient {
   patientName?: string;
   status?: string;
@@ -19,11 +26,22 @@ export interface RedesignItem {
   priority: string;
 }
 
+export interface RedesignSeletedItem {
+  caseId: string;
+  attempt: number;
+  caseOwner: string;
+  patientName: string;
+  priority?: string;
+  activeDate: string;
+  key: string;
+}
+
 export interface RedesignCaseTableProps {
   data: RedesignItem[];
   activeDate: string | null;
   activeToken: string | null;
   onRefresh?: () => void;
+  passwords : string[]
 }
 
 export interface LiveCaseTableProps {
@@ -31,6 +49,7 @@ export interface LiveCaseTableProps {
   activeDate: string | null;
   activeToken: string | null;
   onRefresh?: () => void;
+  passwords : string[]
 }
 
 export interface UploadResult {

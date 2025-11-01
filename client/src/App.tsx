@@ -8,22 +8,32 @@ type DateMap = Record<string, Record<string, CaseItem[]>>;
 
 const App: React.FC = () => {
   const [data, setData] = useState<DateMap>({});
+  const [passwords, setPasswords] = useState<string[]>([]);
   const [activeDate, setActiveDate] = useState<string | null>(null);
   const [activeToken, setActiveToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // ✅ Move fetchData outside of useEffect and memoize with useCallback
+  // Memoized fetch function
   const fetchData = useCallback(async () => {
     try {
       setIsLoading(true);
       const res = await fetch("http://localhost:5000/api/cases/details");
-      const json: DateMap = await res.json();
-      setData(json);
+      const json = await res.json();
 
-      const allDates = Object.keys(json);
+      // Expecting backend to return { success, data, passwords }
+      if (json.success) {
+        setData(json.data || {});
+        setPasswords(json.passwords || []);
+
+        // Log passwords
+      } else {
+        console.error("Failed to fetch:", json.message || "Unknown error");
+      }
+
+      const allDates = Object.keys(json.data || {});
       if (allDates.length > 0) {
         const firstDate = allDates[0];
-        const tokens = Object.keys(json[firstDate] || {});
+        const tokens = Object.keys(json.data[firstDate] || {});
         const firstToken = tokens.length > 0 ? tokens[0] : null;
         setActiveDate((prev) => prev || firstDate);
         setActiveToken((prev) => prev || firstToken);
@@ -109,6 +119,7 @@ const App: React.FC = () => {
             activeToken={activeToken}
             data={filteredCases as RedesignItem[]}
             onRefresh={fetchData}
+            passwords={passwords}
           />
         ) : (
           <LiveCaseTable
@@ -120,6 +131,7 @@ const App: React.FC = () => {
             activeDate={activeDate}
             activeToken={activeToken}
             onRefresh={fetchData}
+            passwords={passwords}
           />
         )}
       </div>

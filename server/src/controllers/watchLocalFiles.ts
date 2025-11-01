@@ -9,6 +9,7 @@ import {
 } from "../utils/watchLogic.js";
 dotenv.config();
 import fs from "fs";
+import axios from "axios";
 
 const ROOT_DIR = process.env.ROOT_FOLDER || "";
 
@@ -23,15 +24,14 @@ export const getAllCasesData = async (req: Request, res: Response) => {
       allDates.map(async (activeDate) => {
         const datePath = path.join(ROOT_DIR, activeDate);
         try {
-          await fs.promises.access(datePath); // ensures folder exists
+          await fs.promises.access(datePath);
         } catch {
-          return; // skip if missing
+          return; // skip missing folders
         }
 
         const tokens = getTokenFoldersUtil(datePath);
         const tokenData: Record<string, any> = {};
 
-        // Process all tokens concurrently
         await Promise.all(
           tokens.map(async (activeToken) => {
             const tokenPath = path.join(datePath, activeToken);
@@ -46,7 +46,7 @@ export const getAllCasesData = async (req: Request, res: Response) => {
                   await fs.promises.access(livePath);
                   caseDetail = await getLiveCases(livePath);
                 } catch {
-                  // livePath not found, skip
+                  // skip missing live folder
                 }
               }
 
@@ -65,7 +65,26 @@ export const getAllCasesData = async (req: Request, res: Response) => {
       })
     );
 
-    res.json(finalData);
+    // 🔹 Fetch passwords from external API
+    let passwords: string[] = [];
+    try {
+      const passkeyRes = await axios.get(
+        `${process.env.PORTAL_URL}/api/passkey/getAllPasskey`
+      );
+      if (passkeyRes.data?.success && Array.isArray(passkeyRes.data.data)) {
+        passwords = passkeyRes.data.data.map((p: any) => p.password);
+      }
+    } catch (err: any) {
+      console.error("⚠️ Failed to fetch passkeys:", err.message);
+    }
+
+    // Send combined response
+    res.json({
+      success: true,
+      message: "Cases and passkeys fetched successfully",
+      data: finalData,
+      passwords, // passwords array
+    });
   } catch (err: any) {
     console.error("❌ Error reading case folders:", err.message);
     res.status(500).json({

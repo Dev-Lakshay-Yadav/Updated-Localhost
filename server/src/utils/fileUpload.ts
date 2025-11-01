@@ -223,7 +223,7 @@ const uploadWithRetry = async (
     } catch (err: any) {
       const status = err.response?.status;
 
-      // ✅ Handle 409 conflict: file already exists → replace it
+      // Handle 409 conflict: file already exists → replace it
       if (status === 409) {
         const existingFileId = err.response?.data?.context_info?.conflicts?.id;
         if (existingFileId) {

@@ -15,7 +15,7 @@ export function getCurrentTimeString() {
 }
 
 export function getCreationTimeDateString(
-    creationTimeMs: string | number, // ✅ explicit type
+    creationTimeMs: string | number, // explicit type
 ) {
     const d = new Date(
         parseInt(creationTimeMs.toString()) + (1000 * 60 * 60 * (5.5 - 14))
