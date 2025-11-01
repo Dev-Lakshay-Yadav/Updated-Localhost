@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import type {
   RedesignCaseTableProps,
   UploadResponse,
-  UploadResult,
 } from "../types/caseTypes";
 
 const RedesignTable: React.FC<RedesignCaseTableProps> = ({
@@ -56,6 +55,7 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       key: string;
     }[] = [];
 
+    // 🟢 Step 1: Build selected data list
     filteredData.forEach((item) => {
       const patients =
         item.patients && item.patients.length > 0
@@ -67,7 +67,10 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
         if (selectedPatients.has(key)) {
           selectedData.push({
             caseId: item.caseId,
-            patientName: p.patientName || "Single Unit Case",
+            patientName:
+              !p.patientName || p.patientName === "Single Unit Case"
+                ? ""
+                : p.patientName,
             caseOwner: item.caseOwner,
             attempt: item.attempt,
             activeDate,
@@ -78,6 +81,7 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       });
     });
 
+    // 🟡 Step 2: Validate selection
     if (selectedData.length === 0) {
       setUploadStatus((prev) => ({
         ...prev,
@@ -86,16 +90,14 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
       return;
     }
 
+    // 🟣 Step 3: Prepare upload state
     setLoading(true);
-
-    // 🟠 1️⃣ Mark selected items as "uploading"
-    const uploadingState: Record<string, string> = {};
-    selectedData.forEach((item) => {
-      uploadingState[item.key] = "uploading";
-    });
-    setUploadStatus((prev) => ({ ...prev, ...uploadingState }));
+    setUploadStatus(
+      Object.fromEntries(selectedData.map((d) => [d.key, "uploading"]))
+    );
 
     try {
+      // 🟢 Step 4: Send upload request
       const response = await fetch(
         "http://localhost:5000/api/upload/redesign",
         {
@@ -105,38 +107,47 @@ const RedesignTable: React.FC<RedesignCaseTableProps> = ({
         }
       );
 
+      const result: UploadResponse = await response.json();
+
+      // 🔴 Step 5: Handle server errors
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ Bulk upload failed:", errorText);
-        setUploadStatus({ global: "❌ Bulk upload failed. See console." });
+        console.error("❌ Bulk upload failed:", result);
+        selectedData.forEach((d) =>
+          setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
+        );
       } else {
-        const result: UploadResponse = await response.json();
-        console.log("✅ Bulk upload result:", result);
-
-        const newStatus: Record<string, string> = {};
-        let allSuccess = true;
-
-        result.results?.forEach((r: UploadResult) => {
-          newStatus[r.caseId] = r.status;
-          if (r.status !== "uploaded" && r.status !== "success") {
-            allSuccess = false;
+        // 🟢 Step 6: Apply upload results
+        result.results.forEach((r) => {
+          const match = selectedData.find(
+            (d) => d.caseId === r.caseId && d.patientName === r.patientName
+          );
+          if (match) {
+            setUploadStatus((prev) => ({
+              ...prev,
+              [match.key]: r.status === "uploaded" ? "uploaded" : "failed",
+            }));
           }
         });
 
-        setUploadStatus((prev) => ({ ...prev, ...newStatus }));
-
-        // ✅ 2️⃣ Trigger refresh if all uploads successful
-        if (allSuccess && typeof onRefresh === "function") {
-          console.log("🔁 All uploads successful — refreshing data...");
-          await onRefresh();
+        // 🟢 Step 7: Auto refresh if all succeeded
+        const allUploaded = result.results.every(
+          (r) => r.status === "uploaded"
+        );
+        if (allUploaded && typeof onRefresh === "function") {
+          setTimeout(() => {
+            onRefresh();
+          }, 800);
         }
       }
     } catch (error) {
-      console.error("❌ Bulk upload error:", error);
-      setUploadStatus({ global: "❌ Error during bulk upload." });
+      // 🛑 Step 8: Network or unexpected error
+      console.error("💥 Bulk upload network error:", error);
+      selectedData.forEach((d) =>
+        setUploadStatus((prev) => ({ ...prev, [d.key]: "failed" }))
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   // Get all case keys and filter out already uploaded ones

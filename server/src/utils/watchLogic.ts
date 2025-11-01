@@ -10,11 +10,14 @@ function buildAllowedRtFolders(): Set<string> {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
 
-    const day = String(d.getDate()).padStart(2, "0");
+    const dayNum = d.getDate();
+    const dayPadded = String(dayNum).padStart(2, "0");
     const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
     const year = d.getFullYear();
 
-    allowed.add(`RT-${day} ${month} ${year}`);
+    // Add both formats: RT-1 Nov 2025 and RT-01 Nov 2025
+    allowed.add(`RT-${dayNum} ${month} ${year}`);
+    allowed.add(`RT-${dayPadded} ${month} ${year}`);
   }
 
   return allowed;
@@ -52,7 +55,6 @@ const REDESIGN_REGEX = /^RD-(\d+)-([A-Z]{2}\d{5})\s--\s(.+)-\s?(HIGH|MEDIUM)$/;
 
 // 🔹 LIVE CASES
 export const getLiveCases = (basePath: string) => {
-
   if (!fs.existsSync(basePath)) {
     throw new Error(`Base path not found: ${basePath}`);
   }

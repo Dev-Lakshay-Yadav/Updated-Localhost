@@ -149,13 +149,21 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
     if (!Array.isArray(cases) || cases.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Expected a non-empty array of cases.",
+        message: "No cases provided or invalid format",
+      });
+    }
+
+    const portalUrl = process.env.PORTAL_URL;
+    if (!portalUrl) {
+      return res.status(500).json({
+        success: false,
+        message: "Portal URL not configured",
       });
     }
 
     const results: any[] = [];
 
-    for (const item of cases) {
+    for (const c of cases) {
       const {
         activeDate,
         caseId,
@@ -164,21 +172,16 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
         attempt,
         priority,
         key,
-      } = item;
+      } = c;
 
-      // Validate
-      if (
-        !activeDate ||
-        !caseId ||
-        !caseOwner ||
-        !patientName ||
-        !attempt ||
-        !priority
-      ) {
+      // --- Validate input ---
+      if (!caseId || !activeDate || !caseOwner || !patientName || !attempt || !priority) {
         results.push({
           key,
-          success: false,
-          message: "Missing required fields.",
+          caseId,
+          patientName,
+          status: "failed",
+          error: "Missing required fields",
         });
         continue;
       }
@@ -187,31 +190,46 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
       const userToken = caseId.substring(0, 2);
 
       try {
-        // Step 2: Fetch Box IDs
+        // --- Fetch Box IDs ---
         const { data } = await axios.get(
-          `${process.env.PORTAL_URL}/api/localUploader/fetchBoxIds/${caseId}`
+          `${portalUrl}/api/localUploader/fetchBoxIds/${caseId}`
         );
         const caseFolderId = data.caseFolderId;
         if (!caseFolderId)
-          throw new Error("Box caseFolderId missing in response");
+          throw new Error("Missing caseFolderId in portal response");
 
-        // Step 3: Build folder paths
-        const folderPath = `${ROOT_DIR}/${activeDate}/REDESIGN/RD-${attempt}-${caseId} -- ${caseOwner}-${priority}/TS_Uploads/${patientName}`;
+        // --- Construct redesign folder path ---
+        const folderPath = path.join(
+          ROOT_DIR,
+          activeDate,
+          "REDESIGN",
+          `RD-${attempt}-${caseId} -- ${caseOwner}-${priority}`,
+          "TS_Uploads",
+          patientName
+        );
+
         const previewPath = path.join(folderPath, "Previews");
         const downloadPath = path.join(folderPath, "Downloads");
 
-        // Step 4: Collect files
+        // --- Get local files ---
         const [previewFiles, downloadFiles] = await Promise.all([
           getFilesInFolder(previewPath).catch(() => []),
           getFilesInFolder(downloadPath).catch(() => []),
         ]);
-
         const allFiles = [...previewFiles, ...downloadFiles];
-        if (allFiles.length === 0) {
-          console.warn(`⚠️ No files found for ${caseId}/${patientName}`);
+
+        if (!allFiles || allFiles.length === 0) {
+          results.push({
+            key,
+            caseId,
+            patientName,
+            status: "failed",
+            error: "No files found in local folder",
+          });
+          continue;
         }
 
-        // Step 5: Upload to Box
+        // --- Upload files to Box ---
         const summary = await handleBoxUpload(
           caseId,
           userToken,
@@ -220,44 +238,61 @@ export const uploadRedesignCases = async (req: Request, res: Response) => {
           allFiles
         );
 
-        // Step 6: Mark upload locally
-        const newFolderPath = path.join(folderPath, "AAA -- U");
-        await fs.mkdir(newFolderPath, { recursive: true });
+        // --- Mark upload completion ---
+        try {
+          const newFolderPath = path.join(folderPath, "AAA -- U");
+          await fs.mkdir(newFolderPath, { recursive: true });
+        } catch (err: any) {
+          console.warn(
+            `⚠️ Failed to create completion folder for ${caseId}:`,
+            err.message
+          );
+        }
 
-        // Step 7: Notify portal
-        await axios.post(
-          `${process.env.PORTAL_URL}/api/localUploader/upload-details`,
-          summary
-        );
+        // --- Notify portal ---
+        try {
+          await axios.post(
+            `${portalUrl}/api/localUploader/upload-details`,
+            summary
+          );
+        } catch (err: any) {
+          console.error(
+            `❌ Failed to notify portal for ${caseId}:`,
+            err.message
+          );
+        }
 
         results.push({
           key,
-          success: true,
-          message: "Uploaded successfully",
+          caseId,
+          patientName,
+          status: "uploaded",
           summary,
         });
       } catch (err: any) {
-        console.error(`❌ Upload failed for ${caseId}:`, err.message);
+        console.error(`💥 Error uploading ${caseId}:`, err.message);
         results.push({
           key,
-          success: false,
-          message: err.message,
+          caseId,
+          patientName,
+          status: "failed",
+          error: err.message,
         });
       }
     }
 
-    // ✅ Return consolidated results
+    // --- Return all results ---
     return res.status(200).json({
       success: true,
-      total: results.length,
+      message: `Processed ${cases.length} redesign cases`,
       results,
     });
-  } catch (err: any) {
-    console.error("💥 Unexpected bulk upload error:", err);
+  } catch (error: any) {
+    console.error("💥 Unexpected error in uploadRedesignCases:", error.message);
     return res.status(500).json({
       success: false,
-      message: "Unexpected server error occurred during bulk upload.",
-      error: err.message,
+      message: "Unexpected error during bulk redesign case upload",
+      error: error.message,
     });
   }
 };
